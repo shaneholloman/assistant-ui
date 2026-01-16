@@ -52,20 +52,14 @@
     }
   }
 
-  & p {
-    margin-top: 1.25rem !important;
-    margin-bottom: 0.375rem !important;
-    padding-inline-start: 0.625rem !important;
-    font-size: 0.6875rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.04em !important;
-    text-transform: uppercase !important;
+  /* Sidebar separator */
+  & p.inline-flex {
+    margin-top: 1.5rem !important;
+    font-size: 0.75rem !important;
+    font-weight: 500 !important;
+    letter-spacing: 0 !important;
+    text-transform: none !important;
     color: var(--fd-muted-foreground) !important;
-    opacity: 0.6;
-
-    &:first-of-type {
-      margin-top: 0 !important;
-    }
   }
 
   & svg {
@@ -174,8 +168,19 @@
   & :where(code):not(:where(pre code)):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
     font-size: 0.8125rem !important;
     padding: 0.125rem 0.375rem !important;
-    border-radius: 0.25rem !important;
+    border-radius: 0.375rem !important;
+    border: none !important;
     background: var(--muted) !important;
+    font-weight: 500 !important;
+  }
+
+  & [class~="not-prose"] :where(code):not(:where(pre code)) {
+    font-size: 0.8125rem !important;
+    padding: 0.125rem 0.375rem !important;
+    border-radius: 0.375rem !important;
+    border: none !important;
+    background: var(--muted) !important;
+    font-weight: 500 !important;
   }
 
   & :where(pre):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
@@ -196,7 +201,9 @@
   }
 
   & :where(a):not(:where([class~="not-prose"], [class~="not-prose"] *)):not([data-card]) {
-    text-decoration: none !important;
+    text-decoration: underline !important;
+    text-underline-offset: 2px !important;
+    text-decoration-color: var(--fd-muted-foreground) !important;
   }
 
   & :where(table):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
@@ -262,6 +269,12 @@
   & :where(h2 + p, h3 + p, h4 + p):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
     margin-top: 0 !important;
   }
+
+  & :where(img):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    margin-left: auto !important;
+    margin-right: auto !important;
+    border-radius: 0.75rem !important;
+  }
 }
 
 figure.shiki {
@@ -282,8 +295,8 @@ figure.shiki {
   }
 
   & figcaption {
-    font-family: var(--font-sans), system-ui, sans-serif !important;
-    font-size: 0.8125rem !important;
+    font-family: var(--font-mono), ui-monospace, monospace !important;
+    font-size: 0.8625rem !important;
     font-weight: 500 !important;
     color: var(--muted-foreground) !important;
   }
