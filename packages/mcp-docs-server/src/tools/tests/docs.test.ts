@@ -57,14 +57,14 @@ describe("assistantUIDocs", () => {
 
   it("should support multiple path requests", async () => {
     const result = await testContext.callTool("assistantUIDocs", {
-      paths: ["(docs)/index", "(reference)/api-reference/primitives/Thread"],
+      paths: ["(docs)/index", "(reference)/api-reference/primitives/thread"],
     });
 
     expect(result.results).toBeDefined();
     expect(result.results).toHaveLength(2);
     expect(result.results[0].path).toBe("(docs)/index");
     expect(result.results[1].path).toBe(
-      "(reference)/api-reference/primitives/Thread",
+      "(reference)/api-reference/primitives/thread",
     );
   });
 
@@ -76,9 +76,9 @@ describe("assistantUIDocs", () => {
     expect(result.path).toBe("(reference)/api-reference/primitives");
     expect(result.found).toBe(true);
     expect(result.type).toBe("directory");
-    expect(result.files).toContain("Thread");
-    expect(result.files).toContain("Message");
-    expect(result.files).toContain("Composer");
+    expect(result.files).toContain("thread");
+    expect(result.files).toContain("message");
+    expect(result.files).toContain("composer");
   });
 
   it("should parse MDX files with frontmatter", async () => {
