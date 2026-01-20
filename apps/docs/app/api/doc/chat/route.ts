@@ -8,61 +8,39 @@ import {
   tool,
 } from "ai";
 import z from "zod";
-import { searchDocs } from "@/lib/vector";
 import { source } from "@/lib/source";
 import { getLLMText } from "@/lib/get-llm-text";
+import { checkRateLimit } from "@/lib/rate-limit";
 import type * as PageTree from "fumadocs-core/page-tree";
 
-export const maxDuration = 300;
-
-const isDev = process.env.NODE_ENV === "development";
-
-// Helper functions for browseDocs tool
 function findFolderByPath(
   tree: PageTree.Root,
   path: string,
-): PageTree.Folder | null {
+): PageTree.Folder | undefined {
   const segments = path.split("/").filter(Boolean);
-  let current: PageTree.Node[] = tree.children;
-  let folder: PageTree.Folder | null = null;
 
-  for (const seg of segments) {
-    folder =
-      current.find(
-        (n): n is PageTree.Folder =>
-          n.type === "folder" &&
-          (n.index?.url?.includes(`/${seg}`) ||
-            (typeof n.name === "string" &&
-              n.name.toLowerCase() === seg.toLowerCase())),
-      ) ?? null;
-    if (!folder) return null;
-    current = folder.children;
+  let children: PageTree.Node[] = tree.children;
+  let foundFolder: PageTree.Folder | undefined;
+
+  for (const segment of segments) {
+    foundFolder = undefined;
+    for (const node of children) {
+      if (node.type === "folder") {
+        const name = typeof node.name === "string" ? node.name : "";
+        if (name.toLowerCase().replace(/\s+/g, "-") === segment.toLowerCase()) {
+          foundFolder = node;
+          children = node.children;
+          break;
+        }
+      }
+    }
+    if (!foundFolder) return undefined;
   }
-  return folder;
+
+  return foundFolder;
 }
 
-function countPages(folder: PageTree.Folder): number {
-  return folder.children.reduce(
-    (acc, node) => {
-      if (node.type === "page") return acc + 1;
-      if (node.type === "folder") return acc + countPages(node);
-      return acc;
-    },
-    folder.index ? 1 : 0,
-  );
-}
-
-const getRatelimit = async () => {
-  if (isDev) return null;
-  const { kv } = await import("@vercel/kv");
-  const { Ratelimit } = await import("@upstash/ratelimit");
-  return new Ratelimit({
-    redis: kv,
-    limiter: Ratelimit.fixedWindow(5, "30s"),
-  });
-};
-
-const ratelimitPromise = getRatelimit();
+export const maxDuration = 300;
 
 const SYSTEM_PROMPT = `You are the assistant-ui docs assistant.
 
@@ -98,35 +76,28 @@ Do NOT dump all documentation categories. Keep it conversational.
 </greetings>
 
 <tools>
-You have three documentation tools:
+You have two documentation tools:
 
-1. **searchDocs** - Semantic search across all docs
-   - Best for: finding pages by concept/keyword
-   - Returns: snippets with titles and URLs
+1. **listDocs** - Browse documentation structure
+   - Use with no path for root categories
+   - Use with path (e.g., "ui", "runtimes") to see pages in that section
+   - Returns: list of folders and pages with URLs
 
-2. **browseDocs** - Explore documentation structure
-   - Best for: understanding what's available, finding related pages
-   - Use with no path for root categories, or specify path (e.g., "ui")
-   - Returns: list of pages/folders at that level
-   - IMPORTANT: Only items with a "url" field are linkable pages. Folders without "url" are just categories - don't link to them.
-
-3. **readDoc** - Read full page content
-   - Best for: getting complete information after identifying the right page
-   - Input: slug like "ui/thread"
-   - Returns: full processed page content
+2. **readDoc** - Read a specific documentation page
+   - Input: slug (e.g., "ui/thread") or URL (e.g., "/docs/ui/thread")
+   - Returns: full page content
 
 **Recommended patterns:**
-- User provides a specific page path (e.g., "/docs/ui/thread") → readDoc directly, no search needed
-- Specific question without page path → searchDocs → readDoc for full context
-- Exploring options → browseDocs → readDoc relevant pages
-- "What can I do with X?" → browseDocs(X category) → summarize
-
-IMPORTANT: When the user mentions a specific doc path like "/docs/..." or "explain /docs/...", use readDoc directly. Don't search first.
+- User asks a question → listDocs to find relevant section → readDoc to get content
+- User mentions a specific path → readDoc directly
 </tools>
 
 <answering>
 - Use the documentation tools to find relevant information
-- Always use markdown links for doc references: [Page Title](/docs/path)
+- **CRITICAL: ONLY use URLs that are explicitly returned by your tools**
+- **NEVER guess or fabricate URLs** - if a tool didn't return a URL, don't link to it
+- When linking, copy the exact URL from tool results: [Page Title](/docs/exact-path-from-tool)
+- Prefer not linking over linking to a potentially non-existent page
 - Admit uncertainty rather than guessing
 </answering>
 
@@ -141,16 +112,10 @@ Use inline code (\`backticks\`) for:
 `;
 
 export async function POST(req: Request): Promise<Response> {
-  const { messages, tools } = await req.json();
+  const rateLimitResponse = await checkRateLimit(req);
+  if (rateLimitResponse) return rateLimitResponse;
 
-  const ratelimit = await ratelimitPromise;
-  if (ratelimit) {
-    const ip = req.headers.get("x-forwarded-for") ?? "ip";
-    const { success } = await ratelimit.limit(ip);
-    if (!success) {
-      return new Response("Rate limit exceeded", { status: 429 });
-    }
-  }
+  const { messages, tools } = await req.json();
 
   const prunedMessages = pruneMessages({
     messages: convertToModelMessages(messages),
@@ -166,22 +131,9 @@ export async function POST(req: Request): Promise<Response> {
     stopWhen: stepCountIs(25),
     tools: {
       ...frontendTools(tools),
-      searchDocs: tool({
-        description: "Search assistant-ui documentation",
-        inputSchema: z.object({
-          query: z.string().describe("Search query"),
-        }),
-        execute: async ({ query }) => {
-          const results = await searchDocs(query, 3);
-          return results.map((r) => ({
-            title: r.metadata?.title,
-            url: r.metadata?.url,
-            content: r.metadata?.content,
-          }));
-        },
-      }),
-      browseDocs: tool({
-        description: "Browse documentation structure at a given path",
+      listDocs: tool({
+        description:
+          "List documentation pages. Use with no path for root categories, or specify path to browse a section.",
         inputSchema: z.object({
           path: z
             .string()
@@ -200,8 +152,6 @@ export async function POST(req: Request): Promise<Response> {
               .map((folder) => ({
                 type: "folder",
                 name: folder.name,
-                pageCount: countPages(folder),
-                // Only include url if folder has an index page
                 ...(folder.index ? { url: folder.index.url } : {}),
               }));
           }
@@ -218,11 +168,8 @@ export async function POST(req: Request): Promise<Response> {
                 return {
                   type: "folder",
                   name: node.name,
-                  // Only include url if folder has an index page
                   ...(node.index ? { url: node.index.url } : {}),
                 };
-              case "separator":
-                return { type: "separator", name: node.name };
               default:
                 return [];
             }
@@ -237,18 +184,11 @@ export async function POST(req: Request): Promise<Response> {
             .describe("Page slug (e.g., 'ui/thread') or URL"),
         }),
         execute: async ({ slugOrUrl }) => {
-          let path = slugOrUrl;
-          if (
-            slugOrUrl.startsWith("http://") ||
-            slugOrUrl.startsWith("https://")
-          ) {
-            try {
-              path = new URL(slugOrUrl).pathname;
-            } catch {
-              return { error: `Invalid URL: ${slugOrUrl}` };
-            }
-          }
-          const normalized = path.replace(/^\/docs\/?/, "");
+          const path = slugOrUrl.startsWith("http")
+            ? new URL(slugOrUrl).pathname
+            : slugOrUrl;
+
+          const normalized = path.replace(/^(\/docs\/|docs\/)+/, "");
           const slugs = normalized.split("/").filter(Boolean);
 
           const page = source.getPage(slugs);
