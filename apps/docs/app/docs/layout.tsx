@@ -10,31 +10,44 @@ import {
   DocsSidebar,
 } from "@/components/docs/contexts/sidebar";
 import { SidebarContent } from "@/components/docs/layout/sidebar-content";
+import { ChatPanelProvider } from "@/components/docs/contexts/chat-panel";
+import {
+  DocsContent,
+  DocsChatPanel,
+} from "@/components/docs/layout/docs-layout";
+import { DocsRuntimeProvider } from "@/contexts/DocsRuntimeProvider";
 
 export default function Layout({ children }: { children: ReactNode }) {
   const tabs = getSidebarTabs(source.pageTree);
 
   return (
-    <DocsSidebarProvider>
-      <DocsHeader section="Docs" sectionHref="/docs" />
-      <DocsLayout
-        {...sharedDocsOptions}
-        tree={source.pageTree}
-        nav={{ enabled: false }}
-        sidebar={{
-          ...sharedDocsOptions.sidebar,
-          tabs: false,
-          banner: <SidebarTabs tabs={tabs} />,
-        }}
-      >
-        {children}
-      </DocsLayout>
-      <DocsSidebar>
-        <SidebarContent
-          tree={source.pageTree}
-          banner={<SidebarTabs tabs={tabs} />}
-        />
-      </DocsSidebar>
-    </DocsSidebarProvider>
+    <ChatPanelProvider>
+      <DocsRuntimeProvider>
+        <DocsSidebarProvider>
+          <DocsHeader section="Docs" sectionHref="/docs" />
+          <DocsContent>
+            <DocsLayout
+              {...sharedDocsOptions}
+              tree={source.pageTree}
+              nav={{ enabled: false }}
+              sidebar={{
+                ...sharedDocsOptions.sidebar,
+                tabs: false,
+                banner: <SidebarTabs tabs={tabs} />,
+              }}
+            >
+              {children}
+            </DocsLayout>
+          </DocsContent>
+          <DocsSidebar>
+            <SidebarContent
+              tree={source.pageTree}
+              banner={<SidebarTabs tabs={tabs} />}
+            />
+          </DocsSidebar>
+        </DocsSidebarProvider>
+        <DocsChatPanel />
+      </DocsRuntimeProvider>
+    </ChatPanelProvider>
   );
 }
