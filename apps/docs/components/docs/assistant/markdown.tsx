@@ -15,18 +15,19 @@ import { type CSSProperties, type FC, memo, useState } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ShikiHighlighter from "react-shiki";
+import Link from "next/link";
 
-const SidebarMarkdownTextImpl = () => {
+const MarkdownTextImpl = () => {
   return (
     <MarkdownTextPrimitive
       remarkPlugins={[remarkGfm]}
-      className="aui-md-sidebar"
-      components={sidebarComponents}
+      className="aui-md-assistant"
+      components={markdownComponents}
     />
   );
 };
 
-export const SidebarMarkdownText = memo(SidebarMarkdownTextImpl);
+export const MarkdownText = memo(MarkdownTextImpl);
 
 const useCopyToClipboard = ({
   copiedDuration = 3000,
@@ -73,10 +74,7 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   );
 };
 
-const SidebarSyntaxHighlighter: FC<SyntaxHighlighterProps> = ({
-  code,
-  language,
-}) => {
+const SyntaxHighlighter: FC<SyntaxHighlighterProps> = ({ code, language }) => {
   return (
     <ShikiHighlighter
       language={language}
@@ -85,7 +83,7 @@ const SidebarSyntaxHighlighter: FC<SyntaxHighlighterProps> = ({
       showLanguage={false}
       showLineNumbers
       defaultColor={false}
-      className="[&_pre]:scrollbar-none [&_pre]:overflow-x-auto [&_pre]:rounded-t-none [&_pre]:rounded-b-lg [&_pre]:border [&_pre]:border-border/50 [&_pre]:border-t-0 [&_pre]:bg-muted/30 [&_pre]:p-3 [&_pre]:text-xs [&_pre]:leading-relaxed"
+      className="[&_pre]:scrollbar-none [&_pre]:overflow-x-auto [&_pre]:rounded-t-none [&_pre]:rounded-b-lg [&_pre]:border [&_pre]:border-border/50 [&_pre]:border-t-0 [&_pre]:bg-muted/30 [&_pre]:py-3 [&_pre]:pr-3 [&_pre]:pl-1 [&_pre]:text-xs [&_pre]:leading-relaxed"
       style={
         {
           "--line-numbers-foreground": "var(--color-muted-foreground)",
@@ -100,8 +98,8 @@ const SidebarSyntaxHighlighter: FC<SyntaxHighlighterProps> = ({
   );
 };
 
-const sidebarComponents = memoizeMarkdownComponents({
-  SyntaxHighlighter: SidebarSyntaxHighlighter,
+const markdownComponents = memoizeMarkdownComponents({
+  SyntaxHighlighter: SyntaxHighlighter,
   h1: ({ className, ...props }) => (
     <h1
       className={cn(
@@ -162,15 +160,31 @@ const sidebarComponents = memoizeMarkdownComponents({
       {...props}
     />
   ),
-  a: ({ className, ...props }) => (
-    <a
-      className={cn(
-        "text-primary underline underline-offset-2 hover:text-primary/80",
-        className,
-      )}
-      {...props}
-    />
-  ),
+  a: ({ className, href, children, title, target, rel }) => {
+    const linkClass = cn(
+      "text-primary underline underline-offset-2 hover:text-primary/80",
+      className,
+    );
+
+    if (href?.startsWith("/")) {
+      return (
+        <Link href={href} className={linkClass} title={title} target={target}>
+          {children}
+        </Link>
+      );
+    }
+    return (
+      <a
+        href={href}
+        className={linkClass}
+        title={title}
+        target={target}
+        rel={rel}
+      >
+        {children}
+      </a>
+    );
+  },
   blockquote: ({ className, ...props }) => (
     <blockquote
       className={cn(
@@ -233,9 +247,7 @@ const sidebarComponents = memoizeMarkdownComponents({
       {...props}
     />
   ),
-  tr: ({ className, ...props }) => (
-    <tr className={cn("", className)} {...props} />
-  ),
+  tr: (props) => <tr {...props} />,
   pre: ({ className, ...props }) => (
     <pre
       className={cn(

@@ -108,6 +108,7 @@ You have three documentation tools:
    - Best for: understanding what's available, finding related pages
    - Use with no path for root categories, or specify path (e.g., "ui")
    - Returns: list of pages/folders at that level
+   - IMPORTANT: Only items with a "url" field are linkable pages. Folders without "url" are just categories - don't link to them.
 
 3. **readDoc** - Read full page content
    - Best for: getting complete information after identifying the right page
@@ -115,16 +116,17 @@ You have three documentation tools:
    - Returns: full processed page content
 
 **Recommended patterns:**
-- Specific question → searchDocs → readDoc for full context
+- User provides a specific page path (e.g., "/docs/ui/thread") → readDoc directly, no search needed
+- Specific question without page path → searchDocs → readDoc for full context
 - Exploring options → browseDocs → readDoc relevant pages
 - "What can I do with X?" → browseDocs(X category) → summarize
 
-Choose the most appropriate tool based on the question. No default preference.
+IMPORTANT: When the user mentions a specific doc path like "/docs/..." or "explain /docs/...", use readDoc directly. Don't search first.
 </tools>
 
 <answering>
 - Use the documentation tools to find relevant information
-- Cite doc URLs when referencing specific pages
+- Always use markdown links for doc references: [Page Title](/docs/path)
 - Admit uncertainty rather than guessing
 </answering>
 
@@ -196,9 +198,11 @@ export async function POST(req: Request): Promise<Response> {
             return pageTree.children
               .filter((node): node is PageTree.Folder => node.type === "folder")
               .map((folder) => ({
+                type: "folder",
                 name: folder.name,
-                path: folder.index?.url?.replace("/docs/", "") ?? "",
                 pageCount: countPages(folder),
+                // Only include url if folder has an index page
+                ...(folder.index ? { url: folder.index.url } : {}),
               }));
           }
 
@@ -214,7 +218,8 @@ export async function POST(req: Request): Promise<Response> {
                 return {
                   type: "folder",
                   name: node.name,
-                  path: node.index?.url?.replace("/docs/", "") ?? "",
+                  // Only include url if folder has an index page
+                  ...(node.index ? { url: node.index.url } : {}),
                 };
               case "separator":
                 return { type: "separator", name: node.name };
@@ -257,5 +262,13 @@ export async function POST(req: Request): Promise<Response> {
     onError: console.error,
   });
 
-  return result.toUIMessageStreamResponse();
+  return result.toUIMessageStreamResponse({
+    originalMessages: messages,
+    messageMetadata: ({ part }) => {
+      if (part.type === "finish") {
+        return { custom: { usage: part.totalUsage } };
+      }
+      return undefined;
+    },
+  });
 }

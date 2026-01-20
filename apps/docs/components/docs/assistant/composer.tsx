@@ -5,24 +5,39 @@ import { type Model, MODELS } from "@/constants/model";
 import { AssistantIf, ComposerPrimitive } from "@assistant-ui/react";
 import { ArrowUpIcon, ChevronDownIcon, SquareIcon } from "lucide-react";
 import Image from "next/image";
-import { type FC, useState } from "react";
+import { type ReactNode, useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 
-export const SidebarComposer: FC = () => {
+export function AssistantComposer(): ReactNode {
   const [model, setModel] = useState<Model>(MODELS[0]);
   const [showPicker, setShowPicker] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showPicker) return;
+
+    function handleClickOutside(e: MouseEvent): void {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setShowPicker(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showPicker]);
 
   return (
-    <ComposerPrimitive.Root className="bg-background py-3">
+    <ComposerPrimitive.Root className="bg-background py-2">
       <div className="rounded-xl border border-border bg-muted/50 focus-within:border-ring/50 focus-within:ring-1 focus-within:ring-ring/20">
-        <ComposerPrimitive.Input
-          placeholder="Ask a question..."
-          className="field-sizing-content max-h-24 w-full resize-none bg-transparent px-3 pt-2.5 pb-2 text-sm leading-5 placeholder:text-muted-foreground focus:outline-none"
-          rows={1}
-          autoFocus
-        />
+        <ComposerPrimitive.Input asChild>
+          <textarea
+            placeholder="Ask a question..."
+            className="field-sizing-content max-h-32 w-full resize-none bg-transparent px-3 pt-2.5 pb-2 text-sm leading-5 placeholder:text-muted-foreground focus:outline-none"
+            rows={1}
+          />
+        </ComposerPrimitive.Input>
         <div className="flex items-center justify-between px-1.5 pb-1.5">
-          <div className="relative">
+          <div className="relative" ref={pickerRef}>
             <button
               type="button"
               onClick={() => setShowPicker(!showPicker)}
@@ -73,14 +88,14 @@ export const SidebarComposer: FC = () => {
               </div>
             )}
           </div>
-          <SidebarComposerAction />
+          <AssistantComposerAction />
         </div>
       </div>
     </ComposerPrimitive.Root>
   );
-};
+}
 
-const SidebarComposerAction: FC = () => {
+function AssistantComposerAction(): ReactNode {
   return (
     <>
       <AssistantIf condition={({ thread }) => !thread.isRunning}>
@@ -105,4 +120,4 @@ const SidebarComposerAction: FC = () => {
       </AssistantIf>
     </>
   );
-};
+}
