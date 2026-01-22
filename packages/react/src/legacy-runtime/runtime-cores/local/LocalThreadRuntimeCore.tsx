@@ -412,6 +412,10 @@ export class LocalThreadRuntimeCore
         updateMessage({
           status: { type: "incomplete", reason: "cancelled" },
         });
+      } else if (e instanceof Error && e.name === "AbortError") {
+        updateMessage({
+          status: { type: "incomplete", reason: "cancelled" },
+        });
       } else {
         updateMessage({
           status: {
