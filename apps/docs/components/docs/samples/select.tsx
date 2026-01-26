@@ -113,27 +113,14 @@ export function SelectGroupsSample() {
 }
 
 export function SelectVariantsSample() {
-  const [defaultValue, setDefaultValue] = useState("react");
-  const [outlineValue, setOutlineValue] = useState("vue");
-  const [ghostValue, setGhostValue] = useState("svelte");
+  const [outlineValue, setOutlineValue] = useState("react");
+  const [ghostValue, setGhostValue] = useState("vue");
+  const [mutedValue, setMutedValue] = useState("svelte");
 
   return (
     <SampleFrame className="flex h-auto items-center justify-center gap-4 p-6">
       <div className="flex flex-col gap-2">
-        <span className="text-muted-foreground text-xs">Default</span>
-        <SelectRoot value={defaultValue} onValueChange={setDefaultValue}>
-          <SelectTrigger variant="default" className="w-32">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="react">React</SelectItem>
-            <SelectItem value="vue">Vue</SelectItem>
-            <SelectItem value="svelte">Svelte</SelectItem>
-          </SelectContent>
-        </SelectRoot>
-      </div>
-      <div className="flex flex-col gap-2">
-        <span className="text-muted-foreground text-xs">Outline</span>
+        <span className="text-muted-foreground text-xs">Outline (default)</span>
         <SelectRoot value={outlineValue} onValueChange={setOutlineValue}>
           <SelectTrigger variant="outline" className="w-32">
             <SelectValue />
@@ -149,6 +136,19 @@ export function SelectVariantsSample() {
         <span className="text-muted-foreground text-xs">Ghost</span>
         <SelectRoot value={ghostValue} onValueChange={setGhostValue}>
           <SelectTrigger variant="ghost" className="w-32">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="react">React</SelectItem>
+            <SelectItem value="vue">Vue</SelectItem>
+            <SelectItem value="svelte">Svelte</SelectItem>
+          </SelectContent>
+        </SelectRoot>
+      </div>
+      <div className="flex flex-col gap-2">
+        <span className="text-muted-foreground text-xs">Muted</span>
+        <SelectRoot value={mutedValue} onValueChange={setMutedValue}>
+          <SelectTrigger variant="muted" className="w-32">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
