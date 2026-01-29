@@ -24,7 +24,7 @@ const FEATURES = [
   {
     title: "Live Preview",
     description:
-      "See your widgets render in real-time. Test across desktop, tablet, and mobile viewports with hot reload.",
+      "See your apps render in real-time. Test across desktop, tablet, and mobile viewports with hot reload.",
     icon: Play,
     iconColor: "text-green-400",
   },
@@ -38,21 +38,21 @@ const FEATURES = [
   {
     title: "MCP Server Scaffold",
     description:
-      "Optional MCP server template included. Run both frontend widget and backend tools with a single command.",
+      "Optional MCP server template included. Run both frontend app and backend tools with a single command.",
     icon: Terminal,
     iconColor: "text-blue-400",
   },
   {
     title: "Production Export",
     description:
-      "Export your widgets as self-contained HTML bundles with all dependencies inlined, ready for deployment.",
+      "Export your apps as self-contained HTML bundles with all dependencies inlined, ready for deployment.",
     icon: Package,
     iconColor: "text-purple-400",
   },
   {
     title: "Display Modes",
     description:
-      "Preview inline, popup, and fullscreen modes. See exactly how your app will appear in ChatGPT or Claude.",
+      "Preview inline, popup, and fullscreen modes. See exactly how your apps appear in ChatGPT or Claude.",
     icon: Monitor,
     iconColor: "text-cyan-400",
   },
@@ -69,11 +69,11 @@ const STEPS = [
   {
     title: "Scaffold your project",
     description:
-      "Run the CLI to create a new project with the workbench, example widgets, and optionally an MCP server.",
+      "Run the CLI to create a new project with the workbench, example apps, and optionally an MCP server.",
     visual: "scaffold",
   },
   {
-    title: "Develop your widgets",
+    title: "Develop your apps",
     description:
       "Build React components using the universal SDK. It auto-detects the platform and adapts to ChatGPT or MCP hosts.",
     visual: "develop",
@@ -87,17 +87,18 @@ const STEPS = [
   {
     title: "Export for production",
     description:
-      "Generate self-contained HTML bundles with all dependencies inlined. Deploy to ChatGPT or MCP hosts.",
+      "Generate self-contained HTML bundles with all dependencies inlined. Deploy to ChatGPT Apps or MCP hosts.",
     visual: "export",
   },
 ] as const;
 
 const WORKBENCH_URL =
-  process.env["NEXT_PUBLIC_WORKBENCH_URL"] ?? "http://localhost:3002";
+  process.env["NEXT_PUBLIC_WORKBENCH_URL"] ??
+  "https://mcp-app-studio-starter.vercel.app";
 
 export default function McpAppStudioPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const iframeSrc = `${WORKBENCH_URL}?component=poi-map`;
+  const iframeSrc = `${WORKBENCH_URL}?component=poi-map&demo=true`;
 
   // Listen for fullscreen messages from workbench iframe
   useEffect(() => {
@@ -210,7 +211,7 @@ export default function McpAppStudioPage() {
               Everything you need to build apps for AI assistants
             </h2>
             <p className="text-muted-foreground">
-              Local development workbench with production-ready export
+              Local development workbench with production-ready export.
             </p>
           </div>
 
@@ -241,7 +242,7 @@ export default function McpAppStudioPage() {
               How It Works
             </h2>
             <p className="text-muted-foreground">
-              From scaffold to production in four steps.
+              From scaffold to production in four steps
             </p>
           </div>
 
@@ -272,7 +273,7 @@ export default function McpAppStudioPage() {
 
         <div className="flex flex-col items-center gap-6 py-16 text-center">
           <p className="font-medium text-2xl tracking-tight">
-            Start building your app today.
+            Start building your app today
           </p>
           <div className="flex items-center gap-6">
             <Button asChild>
@@ -339,7 +340,7 @@ function HeroShowcase({ onFullscreen }: { onFullscreen: () => void }) {
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
 
-  const iframeSrc = `${WORKBENCH_URL}?component=poi-map`;
+  const iframeSrc = `${WORKBENCH_URL}?component=poi-map&demo=true`;
 
   return (
     <div className="hero-showcase-section relative">
@@ -494,7 +495,7 @@ function ScaffoldVisual() {
           </div>
           <div className="flex items-center gap-1.5">
             <span className="text-emerald-400">✓</span>
-            <span>src/widgets/</span>
+            <span>src/apps/</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="text-emerald-400">✓</span>
@@ -526,13 +527,13 @@ function DevelopVisual() {
         <div className="w-1/2 border-zinc-800 border-r p-2">
           <div className="mb-1.5 flex items-center gap-1 text-[9px] text-zinc-500">
             <div className="size-2 rounded-sm bg-blue-500/60" />
-            <span>Widget.tsx</span>
+            <span>App.tsx</span>
           </div>
           <div className="space-y-0.5 font-mono text-[8px] leading-relaxed">
             <div>
               <span className="text-violet-400">export</span>{" "}
               <span className="text-blue-400">function</span>{" "}
-              <span className="text-amber-300">Widget</span>
+              <span className="text-amber-300">App</span>
               <span className="text-zinc-500">() {"{"}</span>
             </div>
             <div className="pl-2">
@@ -663,9 +664,7 @@ function ExportVisual() {
               <Package className="size-3 text-violet-300" />
             </div>
             <div className="flex-1">
-              <div className="font-mono text-[9px] text-zinc-300">
-                widget.html
-              </div>
+              <div className="font-mono text-[9px] text-zinc-300">app.html</div>
               <div className="text-[7px] text-zinc-600">
                 Self-contained bundle
               </div>
