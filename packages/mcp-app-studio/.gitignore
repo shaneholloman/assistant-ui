@@ -3,3 +3,5 @@ node_modules/
 *.tsbuildinfo
 private/
 .preview/
+.claude/
+docs/

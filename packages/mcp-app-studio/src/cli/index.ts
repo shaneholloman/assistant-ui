@@ -20,7 +20,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const TEMPLATE_REPO = "assistant-ui/chatgpt-app-studio-starter";
+const TEMPLATE_REPO = "assistant-ui/mcp-app-studio-starter";
 const TEMPLATE_BRANCH = "main";
 
 const REQUIRED_NODE_VERSION = { major: 20, minor: 9, patch: 0 } as const;
@@ -54,7 +54,7 @@ function ensureSupportedNodeVersion(): void {
   if (!isVersionAtLeast(current, REQUIRED_NODE_VERSION)) {
     console.error(
       pc.red(
-        `chatgpt-app-studio requires Node.js >=${REQUIRED_NODE_VERSION.major}.${REQUIRED_NODE_VERSION.minor}.${REQUIRED_NODE_VERSION.patch} (detected ${process.versions.node}).`,
+        `mcp-app-studio requires Node.js >=${REQUIRED_NODE_VERSION.major}.${REQUIRED_NODE_VERSION.minor}.${REQUIRED_NODE_VERSION.patch} (detected ${process.versions.node}).`,
       ),
     );
     console.error(pc.dim("Please upgrade Node.js (recommended: latest LTS)."));
@@ -74,23 +74,33 @@ function getVersion(): string {
 
 function showHelp(): void {
   console.log(`
-chatgpt-app-studio v${getVersion()}
+mcp-app-studio v${getVersion()}
 
-Create ChatGPT apps with a local development workbench.
+Create interactive apps for ChatGPT and MCP hosts (like Claude Desktop).
 
-Requirements:
+${pc.bold("Requirements:")}
   Node.js >=${REQUIRED_NODE_VERSION.major}.${REQUIRED_NODE_VERSION.minor}.${REQUIRED_NODE_VERSION.patch}
 
-Usage:
-  npx chatgpt-app-studio [project-name]
+${pc.bold("Usage:")}
+  npx mcp-app-studio [project-name] [options]
 
-Options:
-  --help, -h     Show this help message
-  --version, -v  Show version number
+${pc.bold("Options:")}
+  --help, -h              Show this help message
+  --version, -v           Show version number
+  -y, --yes               Non-interactive mode (use defaults or flag values)
+  --template <name>       Template to use: minimal, poi-map (default: minimal)
+  --include-server        Include MCP server (default when not using -y)
+  --no-server             Do not include MCP server
+  --description <text>    App description
 
-Examples:
-  npx chatgpt-app-studio my-app
-  npx chatgpt-app-studio
+${pc.bold("Examples:")}
+  npx mcp-app-studio my-app
+  npx mcp-app-studio .          ${pc.dim("# Use current directory")}
+  npx mcp-app-studio my-app -y --template poi-map --include-server
+
+${pc.bold("Learn more:")}
+  Documentation: https://github.com/assistant-ui/mcp-app-studio
+  Examples:      https://github.com/assistant-ui/mcp-app-studio-starter
 `);
 }
 
@@ -120,6 +130,11 @@ const TEMPLATE_EXPORT_CONFIG: Record<
     entryPoint: "lib/workbench/wrappers/poi-map-sdk.tsx",
     exportName: "POIMapSDK",
   },
+};
+
+const TEMPLATE_DEFAULT_COMPONENT: Record<TemplateType, string> = {
+  minimal: "welcome",
+  "poi-map": "poi-map",
 };
 
 function generateComponentRegistry(components: string[]): string {
@@ -280,6 +295,53 @@ function updateExportScriptDefaults(
   fs.writeFileSync(exportScriptPath, content);
 }
 
+function generateWorkbenchIndexExport(components: string[]): string {
+  const exports: string[] = [];
+  if (components.includes("welcome")) {
+    exports.push("WelcomeCardSDK");
+  }
+  if (components.includes("poi-map")) {
+    exports.push("POIMapSDK");
+  }
+  return exports.length > 0
+    ? `export { ${exports.join(", ")} } from "./wrappers";`
+    : "// No SDK exports";
+}
+
+function updateWorkbenchIndex(targetDir: string, components: string[]): void {
+  const indexPath = path.join(targetDir, "lib/workbench/index.ts");
+  let content = fs.readFileSync(indexPath, "utf-8");
+
+  // Replace the wrappers export line (or add if missing)
+  const wrappersExportRegex = /export \{[^}]*\} from "\.\/wrappers";/;
+  const newExport = generateWorkbenchIndexExport(components);
+
+  if (wrappersExportRegex.test(content)) {
+    content = content.replace(wrappersExportRegex, newExport);
+  } else {
+    // If no wrappers export exists, add it at the end
+    content = content.trimEnd() + "\n\n" + newExport + "\n";
+  }
+
+  fs.writeFileSync(indexPath, content);
+}
+
+function updateWorkbenchStoreDefault(
+  targetDir: string,
+  defaultComponent: string,
+): void {
+  const storePath = path.join(targetDir, "lib/workbench/store.ts");
+  let content = fs.readFileSync(storePath, "utf-8");
+
+  // Replace the default selectedComponent
+  content = content.replace(
+    /selectedComponent: "[^"]+"/,
+    `selectedComponent: "${defaultComponent}"`,
+  );
+
+  fs.writeFileSync(storePath, content);
+}
+
 function applyTemplate(targetDir: string, template: TemplateType): void {
   const components = TEMPLATE_COMPONENTS[template];
 
@@ -303,6 +365,13 @@ function applyTemplate(targetDir: string, template: TemplateType): void {
     "components/examples/index.ts",
   );
   fs.writeFileSync(examplesIndexPath, generateExamplesIndex(components));
+
+  // Update main workbench index to export correct wrappers
+  updateWorkbenchIndex(targetDir, components);
+
+  // Update workbench store default selected component
+  const defaultComponent = TEMPLATE_DEFAULT_COMPONENT[template];
+  updateWorkbenchStoreDefault(targetDir, defaultComponent);
 
   // Remove unused example directories
   const examplesDir = path.join(targetDir, "components/examples");
@@ -345,7 +414,7 @@ interface ProjectConfig {
 
 async function downloadTemplate(targetDir: string): Promise<void> {
   const tarballUrl = `https://github.com/${TEMPLATE_REPO}/archive/refs/heads/${TEMPLATE_BRANCH}.tar.gz`;
-  const tempDir = path.join(os.tmpdir(), `chatgpt-app-studio-${Date.now()}`);
+  const tempDir = path.join(os.tmpdir(), `mcp-app-studio-${Date.now()}`);
   const tarballPath = path.join(tempDir, "template.tar.gz");
 
   try {
@@ -375,7 +444,7 @@ async function downloadTemplate(targetDir: string): Promise<void> {
     await extract({
       file: tarballPath,
       cwd: targetDir,
-      strip: 1, // Remove the top-level directory (e.g., chatgpt-app-studio-starter-main/)
+      strip: 1, // Remove the top-level directory (e.g., mcp-app-studio-starter-main/)
     });
   } finally {
     // Cleanup temp directory
@@ -383,91 +452,169 @@ async function downloadTemplate(targetDir: string): Promise<void> {
   }
 }
 
+interface ParsedArgs {
+  projectName?: string;
+  yes: boolean;
+  template?: TemplateType;
+  includeServer?: boolean;
+  description?: string;
+}
+
+function parseArgs(args: string[]): ParsedArgs {
+  const parsed: ParsedArgs = {
+    yes: false,
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const next = args[i + 1];
+
+    switch (arg) {
+      case "-y":
+      case "--yes":
+        parsed.yes = true;
+        break;
+      case "--template":
+        if (next && (next === "minimal" || next === "poi-map")) {
+          parsed.template = next as TemplateType;
+          i++;
+        }
+        break;
+      case "--include-server":
+        parsed.includeServer = true;
+        break;
+      case "--no-server":
+        parsed.includeServer = false;
+        break;
+      case "--description":
+        if (next && !next.startsWith("-")) {
+          parsed.description = next;
+          i++;
+        }
+        break;
+      default:
+        if (arg && !arg.startsWith("-") && !parsed.projectName) {
+          parsed.projectName = arg;
+        }
+    }
+  }
+
+  return parsed;
+}
+
 async function main() {
   ensureSupportedNodeVersion();
 
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
 
-  if (args.includes("--help") || args.includes("-h")) {
+  if (rawArgs.includes("--help") || rawArgs.includes("-h")) {
     showHelp();
     process.exit(0);
   }
 
-  if (args.includes("--version") || args.includes("-v")) {
+  if (rawArgs.includes("--version") || rawArgs.includes("-v")) {
     console.log(getVersion());
     process.exit(0);
   }
 
-  const argProjectName = args.find((arg) => !arg.startsWith("-"));
+  const parsedArgs = parseArgs(rawArgs);
+  const nonInteractive = parsedArgs.yes;
 
-  p.intro(pc.bgCyan(pc.black(" chatgpt-app-studio ")));
+  p.intro(pc.bgCyan(pc.black(" mcp-app-studio ")));
 
-  if (argProjectName) {
-    const pathCheck = isValidProjectPath(argProjectName);
+  if (parsedArgs.projectName) {
+    const pathCheck = isValidProjectPath(parsedArgs.projectName);
     if (!pathCheck.valid) {
       p.log.error(pathCheck.error ?? "Invalid project path");
       process.exit(1);
     }
   }
 
-  const projectName = argProjectName
-    ? argProjectName
-    : await p.text({
-        message: "Project name:",
-        placeholder: "my-chatgpt-app",
-        validate: (value): string | undefined => {
-          if (!value) return "Project name is required";
-          const pathCheck = isValidProjectPath(value);
-          if (!pathCheck.valid) return pathCheck.error;
-          if (!isValidPackageName(toValidPackageName(value))) {
-            return "Invalid project name";
-          }
-          return undefined;
-        },
-      });
+  let projectName: string | symbol;
+  if (parsedArgs.projectName) {
+    projectName = parsedArgs.projectName;
+  } else if (nonInteractive) {
+    p.log.error("Project name is required in non-interactive mode");
+    process.exit(1);
+  } else {
+    projectName = await p.text({
+      message: "Project name:",
+      placeholder: "my-chatgpt-app",
+      validate: (value): string | undefined => {
+        if (!value) return "Project name is required";
+        const pathCheck = isValidProjectPath(value);
+        if (!pathCheck.valid) return pathCheck.error;
+        if (!isValidPackageName(toValidPackageName(value))) {
+          return "Invalid project name";
+        }
+        return undefined;
+      },
+    });
+  }
 
   if (p.isCancel(projectName)) {
     p.cancel("Operation cancelled.");
     process.exit(0);
   }
 
-  const description = await p.text({
-    message: "App description:",
-    placeholder: "A ChatGPT app that helps users...",
-    initialValue: "",
-  });
+  let description: string | symbol;
+  if (parsedArgs.description !== undefined) {
+    description = parsedArgs.description;
+  } else if (nonInteractive) {
+    description = "";
+  } else {
+    description = await p.text({
+      message: "App description:",
+      placeholder: "A ChatGPT app that helps users...",
+      initialValue: "",
+    });
+  }
 
   if (p.isCancel(description)) {
     p.cancel("Operation cancelled.");
     process.exit(0);
   }
 
-  const template = await p.select({
-    message: "Choose a starter template:",
-    options: [
-      {
-        value: "minimal",
-        label: "Minimal",
-        hint: "Simple welcome card - perfect starting point",
-      },
-      {
-        value: "poi-map",
-        label: "Locations App",
-        hint: "Interactive map demo with full SDK features",
-      },
-    ],
-    initialValue: "minimal",
-  });
+  let template: TemplateType | symbol;
+  if (parsedArgs.template !== undefined) {
+    template = parsedArgs.template;
+  } else if (nonInteractive) {
+    template = "minimal";
+  } else {
+    template = await p.select({
+      message: "Choose a starter template:",
+      options: [
+        {
+          value: "minimal",
+          label: "Minimal",
+          hint: "Simple welcome card - perfect starting point",
+        },
+        {
+          value: "poi-map",
+          label: "Locations App",
+          hint: "Interactive map demo with full SDK features",
+        },
+      ],
+      initialValue: "minimal",
+    });
+  }
 
   if (p.isCancel(template)) {
     p.cancel("Operation cancelled.");
     process.exit(0);
   }
 
-  const includeServer = await p.confirm({
-    message: "Include MCP server?",
-    initialValue: true,
-  });
+  let includeServer: boolean | symbol;
+  if (parsedArgs.includeServer !== undefined) {
+    includeServer = parsedArgs.includeServer;
+  } else if (nonInteractive) {
+    includeServer = true;
+  } else {
+    includeServer = await p.confirm({
+      message: "Include MCP server?",
+      initialValue: true,
+    });
+  }
 
   if (p.isCancel(includeServer)) {
     p.cancel("Operation cancelled.");
@@ -489,19 +636,24 @@ async function main() {
   };
 
   if (!isEmpty(targetDir)) {
-    const overwrite = await p.confirm({
-      message: `Directory "${projectName}" is not empty. Remove existing files?`,
-      initialValue: false,
-    });
+    if (nonInteractive) {
+      // In non-interactive mode, overwrite without prompting
+      emptyDir(targetDir);
+    } else {
+      const overwrite = await p.confirm({
+        message: `Directory "${projectName}" is not empty. Remove existing files?`,
+        initialValue: false,
+      });
 
-    if (p.isCancel(overwrite) || !overwrite) {
-      p.cancel("Operation cancelled.");
-      process.exit(0);
+      if (p.isCancel(overwrite) || !overwrite) {
+        p.cancel("Operation cancelled.");
+        process.exit(0);
+      }
+
+      // Avoid deleting the directory itself (especially dangerous for `.`).
+      // Instead, remove its contents while preserving `.git/`.
+      emptyDir(targetDir);
     }
-
-    // Avoid deleting the directory itself (especially dangerous for `.`).
-    // Instead, remove its contents while preserving `.git/`.
-    emptyDir(targetDir);
   }
 
   const s = p.spinner();
@@ -550,19 +702,65 @@ async function main() {
     nextSteps.push(pc.dim("# This starts both Next.js and MCP server"));
   }
 
-  p.note(nextSteps.join("\n"), "Next steps");
+  p.note(nextSteps.join("\n"), "Get started");
 
+  // Project structure guide
+  const structureGuide = [
+    `${pc.cyan("components/examples/")}  ${pc.dim("← Your widget components")}`,
+    `${pc.cyan("lib/workbench/")}        ${pc.dim("← SDK wrappers for workbench")}`,
+  ];
   if (config.includeServer) {
-    p.log.info(
-      `${pc.dim("Test your MCP server with:")} ${pc.cyan(`cd server && ${runCmd} inspect`)}`,
+    structureGuide.push(
+      `${pc.cyan("server/")}               ${pc.dim("← MCP server for Claude Desktop")}`,
     );
   }
+  p.note(structureGuide.join("\n"), "Project structure");
 
-  p.log.info(
-    `${pc.dim("Export for production:")} ${pc.cyan(`${runCmd} export`)}`,
+  // Key commands
+  const keyCommands: string[] = [];
+  keyCommands.push(
+    `${pc.cyan(`${runCmd} dev`)}      ${pc.dim("Start the development workbench")}`,
   );
+  keyCommands.push(
+    `${pc.cyan(`${runCmd} export`)}   ${pc.dim("Build & export for ChatGPT")}`,
+  );
+  if (config.includeServer) {
+    keyCommands.push(
+      `${pc.cyan(`cd server && ${runCmd} inspect`)}  ${pc.dim("Test MCP server locally")}`,
+    );
+  }
+  p.note(keyCommands.join("\n"), "Key commands");
 
-  p.outro(pc.green("Happy building!"));
+  // Platform-specific tips
+  p.log.message("");
+  p.log.step(pc.bold("Building for multiple platforms:"));
+  p.log.message(
+    `  ${pc.dim("•")} Use ${pc.cyan("useFeature('widgetState')")} to check for ChatGPT features`,
+  );
+  p.log.message(
+    `  ${pc.dim("•")} Use ${pc.cyan("useFeature('modelContext')")} to check for MCP features`,
+  );
+  p.log.message(
+    `  ${pc.dim("•")} Call ${pc.cyan("enableDebugMode()")} in browser console to debug platform detection`,
+  );
+  p.log.message("");
+
+  // Documentation links
+  p.log.step(pc.bold("Learn more:"));
+  p.log.message(
+    `  ${pc.dim("•")} SDK Docs:   ${pc.cyan("https://github.com/assistant-ui/mcp-app-studio#sdk")}`,
+  );
+  p.log.message(
+    `  ${pc.dim("•")} Examples:   ${pc.cyan("https://github.com/assistant-ui/mcp-app-studio-starter")}`,
+  );
+  if (config.includeServer) {
+    p.log.message(
+      `  ${pc.dim("•")} MCP Guide:  ${pc.cyan("https://modelcontextprotocol.io/quickstart")}`,
+    );
+  }
+  p.log.message("");
+
+  p.outro(pc.green("Happy building! 🚀"));
 }
 
 main().catch((err) => {
