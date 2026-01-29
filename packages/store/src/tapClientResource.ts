@@ -42,19 +42,29 @@ export const getClientState = (client: ClientMethods) => {
 // Global cache for function templates by field name
 const fieldAccessFns = new Map<
   string | symbol,
-  (this: ClientInternal, ...args: unknown[]) => unknown
+  (this: unknown, ...args: unknown[]) => unknown
 >();
 
 function getOrCreateProxyFn(prop: string | symbol) {
   let template = fieldAccessFns.get(prop);
   if (!template) {
-    template = function (this: ClientInternal | undefined, ...args: unknown[]) {
-      if (!this)
+    template = function (this: unknown, ...args: unknown[]) {
+      if (!this || typeof this !== "object") {
         throw new Error(
-          `Destructuring the client method "${String(prop)}" is not supported.`,
+          `Method "${String(prop)}" called without proper context. ` +
+            `This may indicate the function was called incorrectly.`,
         );
+      }
 
-      const method = this[SYMBOL_GET_OUTPUT].methods[prop];
+      const output = (this as ClientInternal)[SYMBOL_GET_OUTPUT];
+      if (!output) {
+        throw new Error(
+          `Method "${String(prop)}" called on invalid client proxy. ` +
+            `Ensure you are calling this method on a valid client instance.`,
+        );
+      }
+
+      const method = output.methods[prop];
       if (!method)
         throw new Error(`Method "${String(prop)}" is not implemented.`);
       if (typeof method !== "function")
@@ -70,6 +80,9 @@ class ClientProxyHandler
   extends BaseProxyHandler
   implements ProxyHandler<object>
 {
+  private boundFns: Map<string | symbol, Function> | undefined;
+  private cachedReceiver: unknown;
+
   constructor(
     private readonly outputRef: {
       current: ClientOutputOf<unknown, ClientMethods>;
@@ -79,13 +92,24 @@ class ClientProxyHandler
     super();
   }
 
-  get(_: unknown, prop: string | symbol) {
+  get(_: unknown, prop: string | symbol, receiver: unknown) {
     if (prop === SYMBOL_GET_OUTPUT) return this.outputRef.current;
     if (prop === SYMBOL_CLIENT_INDEX) return this.index;
     const introspection = handleIntrospectionProp(prop, "ClientProxy");
     if (introspection !== false) return introspection;
     const value = this.outputRef.current.methods[prop];
-    if (typeof value === "function") return getOrCreateProxyFn(prop);
+    if (typeof value === "function") {
+      if (this.cachedReceiver !== receiver) {
+        this.boundFns = new Map();
+        this.cachedReceiver = receiver;
+      }
+      let bound = this.boundFns!.get(prop);
+      if (!bound) {
+        bound = getOrCreateProxyFn(prop).bind(receiver);
+        this.boundFns!.set(prop, bound);
+      }
+      return bound;
+    }
     return value;
   }
 
