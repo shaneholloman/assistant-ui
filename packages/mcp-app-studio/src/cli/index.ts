@@ -9,6 +9,10 @@ import * as p from "@clack/prompts";
 import pc from "picocolors";
 import { extract } from "tar";
 import {
+  filterTemplateTarEntry,
+  getGithubArchiveTarballUrl,
+} from "./template-utils";
+import {
   isValidPackageName,
   isValidProjectPath,
   toValidPackageName,
@@ -20,8 +24,17 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const TEMPLATE_REPO = "assistant-ui/mcp-app-studio-starter";
-const TEMPLATE_BRANCH = "main";
+const TEMPLATE_REPO =
+  process.env["MCP_APP_STUDIO_TEMPLATE_REPO"] ??
+  "assistant-ui/mcp-app-studio-starter";
+const TEMPLATE_REF =
+  process.env["MCP_APP_STUDIO_TEMPLATE_REF"] ??
+  process.env["MCP_APP_STUDIO_TEMPLATE_BRANCH"] ??
+  "main";
+
+const DOCS_URL =
+  "https://github.com/assistant-ui/assistant-ui/tree/main/packages/mcp-app-studio";
+const EXAMPLES_URL = "https://github.com/assistant-ui/mcp-app-studio-starter";
 
 const REQUIRED_NODE_VERSION = { major: 20, minor: 9, patch: 0 } as const;
 
@@ -89,7 +102,7 @@ ${pc.bold("Options:")}
   --version, -v           Show version number
   -y, --yes               Non-interactive mode (use defaults or flag values)
   --template <name>       Template to use: minimal, poi-map (default: minimal)
-  --include-server        Include MCP server (default when not using -y)
+  --include-server        Include MCP server (default: true)
   --no-server             Do not include MCP server
   --description <text>    App description
 
@@ -99,8 +112,8 @@ ${pc.bold("Examples:")}
   npx mcp-app-studio my-app -y --template poi-map --include-server
 
 ${pc.bold("Learn more:")}
-  Documentation: https://github.com/assistant-ui/mcp-app-studio
-  Examples:      https://github.com/assistant-ui/mcp-app-studio-starter
+  Documentation: ${DOCS_URL}
+  Examples:      ${EXAMPLES_URL}
 `);
 }
 
@@ -136,6 +149,88 @@ const TEMPLATE_DEFAULT_COMPONENT: Record<TemplateType, string> = {
   minimal: "welcome",
   "poi-map": "poi-map",
 };
+
+function writeStudioConfig(
+  targetDir: string,
+  template: TemplateType,
+  appName: string,
+): void {
+  const exportConfig = TEMPLATE_EXPORT_CONFIG[template];
+  const config = {
+    widget: {
+      entryPoint: exportConfig.entryPoint,
+      exportName: exportConfig.exportName,
+      name: appName,
+    },
+  };
+  fs.writeFileSync(
+    path.join(targetDir, "mcp-app-studio.config.json"),
+    `${JSON.stringify(config, null, 2)}\n`,
+  );
+}
+
+function updateServerPackageName(
+  targetDir: string,
+  projectPackageName: string,
+): void {
+  const serverPkgPath = path.join(targetDir, "server", "package.json");
+  if (!fs.existsSync(serverPkgPath)) return;
+
+  const raw = fs.readFileSync(serverPkgPath, "utf-8");
+  const pkg = JSON.parse(raw) as Record<string, unknown>;
+
+  const baseName = projectPackageName.includes("/")
+    ? projectPackageName.split("/").pop()
+    : projectPackageName;
+
+  if (!baseName) return;
+  pkg["name"] = `${baseName}-mcp-server`;
+  fs.writeFileSync(serverPkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf-8");
+}
+
+function ensureServerPostinstall(targetDir: string): void {
+  const pkgPath = path.join(targetDir, "package.json");
+  const serverPkgPath = path.join(targetDir, "server", "package.json");
+  if (!fs.existsSync(pkgPath) || !fs.existsSync(serverPkgPath)) return;
+
+  const raw = fs.readFileSync(pkgPath, "utf-8");
+  const pkg = JSON.parse(raw) as Record<string, unknown>;
+  const scripts = (pkg["scripts"] as Record<string, string>) ?? {};
+
+  // If the template already defines a postinstall hook, don't override it.
+  if (scripts["postinstall"]) return;
+
+  const scriptPath = path.join(
+    targetDir,
+    "scripts",
+    "mcp-app-studio-postinstall.cjs",
+  );
+  fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+  fs.writeFileSync(
+    scriptPath,
+    `/* eslint-disable */\n` +
+      `const { spawnSync } = require("node:child_process");\n` +
+      `const { existsSync } = require("node:fs");\n` +
+      `const { join } = require("node:path");\n\n` +
+      `const ROOT = process.cwd();\n` +
+      `const SERVER_DIR = join(ROOT, "server");\n\n` +
+      `if (!existsSync(join(SERVER_DIR, "package.json"))) process.exit(0);\n` +
+      `if (existsSync(join(SERVER_DIR, "node_modules")) || existsSync(join(SERVER_DIR, ".pnp.cjs"))) process.exit(0);\n\n` +
+      `const ua = process.env.npm_config_user_agent || "";\n` +
+      `let pm = "npm";\n` +
+      `if (ua.includes("pnpm")) pm = "pnpm";\n` +
+      `else if (ua.includes("yarn")) pm = "yarn";\n` +
+      `else if (ua.includes("bun")) pm = "bun";\n\n` +
+      `console.log("\\n\\x1b[2mInstalling server dependencies (" + pm + ")...\\x1b[0m\\n");\n` +
+      `const result = spawnSync(pm, ["install"], { cwd: SERVER_DIR, stdio: "inherit", shell: process.platform === "win32" });\n` +
+      `process.exit(result.status == null ? 1 : result.status);\n`,
+    "utf-8",
+  );
+
+  scripts["postinstall"] = "node scripts/mcp-app-studio-postinstall.cjs";
+  pkg["scripts"] = scripts;
+  fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf-8");
+}
 
 function generateComponentRegistry(components: string[]): string {
   const imports: string[] = [];
@@ -271,7 +366,13 @@ function updateExportScriptDefaults(
   exportName: string,
 ): void {
   const exportScriptPath = path.join(targetDir, "scripts/export.ts");
+  if (!fs.existsSync(exportScriptPath)) return;
+
   let content = fs.readFileSync(exportScriptPath, "utf-8");
+
+  // Newer templates read defaults from `mcp-app-studio.config.json`.
+  // Avoid brittle regex patching when the export script is config-driven.
+  if (content.includes("mcp-app-studio.config.json")) return;
 
   // Update the default entryPoint
   content = content.replace(
@@ -415,19 +516,75 @@ interface ProjectConfig {
   includeServer: boolean;
 }
 
-async function downloadTemplate(targetDir: string): Promise<void> {
-  const tarballUrl = `https://github.com/${TEMPLATE_REPO}/archive/refs/heads/${TEMPLATE_BRANCH}.tar.gz`;
-  const tempDir = path.join(os.tmpdir(), `mcp-app-studio-${Date.now()}`);
+const REQUIRED_TEMPLATE_PATHS = [
+  "package.json",
+  "scripts/dev.ts",
+  "scripts/export.ts",
+  "lib/workbench/component-registry.tsx",
+  "lib/workbench/wrappers/index.ts",
+  "components/examples/index.ts",
+  "lib/workbench/index.ts",
+  "lib/workbench/store.ts",
+] as const;
+
+function validateTemplateDir(templateDir: string): void {
+  const missing = REQUIRED_TEMPLATE_PATHS.filter(
+    (p) => !fs.existsSync(path.join(templateDir, p)),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `Template validation failed. Missing expected files:\n${missing
+        .map((p) => `- ${p}`)
+        .join(
+          "\n",
+        )}\n\nThis may indicate the starter template has changed. Try updating mcp-app-studio or set MCP_APP_STUDIO_TEMPLATE_REPO / MCP_APP_STUDIO_TEMPLATE_REF to a compatible template.`,
+    );
+  }
+}
+
+function copyDirContents(srcDir: string, destDir: string): void {
+  fs.mkdirSync(destDir, { recursive: true });
+
+  const entries = fs.readdirSync(srcDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === ".git") continue;
+
+    const srcPath = path.join(srcDir, entry.name);
+    const destPath = path.join(destDir, entry.name);
+
+    if (entry.isDirectory()) {
+      copyDirContents(srcPath, destPath);
+      continue;
+    }
+
+    if (entry.isFile()) {
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      fs.copyFileSync(srcPath, destPath);
+    }
+
+    // Skip symlinks and other special file types for safety.
+  }
+}
+
+async function downloadTemplateToTemp(): Promise<{
+  tempDir: string;
+  templateDir: string;
+}> {
+  const tarballUrl = getGithubArchiveTarballUrl(TEMPLATE_REPO, TEMPLATE_REF);
+  const tempDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "mcp-app-studio-template-"),
+  );
   const tarballPath = path.join(tempDir, "template.tar.gz");
+  const extractDir = path.join(tempDir, "extract");
 
   try {
-    fs.mkdirSync(tempDir, { recursive: true });
+    fs.mkdirSync(extractDir, { recursive: true });
 
     // Download the tarball
     const response = await fetch(tarballUrl);
     if (!response.ok) {
       throw new Error(
-        `Failed to download template: ${response.status} ${response.statusText}`,
+        `Failed to download template from ${tarballUrl}: ${response.status} ${response.statusText}`,
       );
     }
 
@@ -443,15 +600,41 @@ async function downloadTemplate(targetDir: string): Promise<void> {
     await pipeline(nodeStream, fileStream);
 
     // Extract the tarball
-    fs.mkdirSync(targetDir, { recursive: true });
     await extract({
       file: tarballPath,
-      cwd: targetDir,
-      strip: 1, // Remove the top-level directory (e.g., mcp-app-studio-starter-main/)
+      cwd: extractDir,
+      strip: 0,
+      filter: (entryPath, entry) =>
+        filterTemplateTarEntry(extractDir, entryPath, entry),
     });
-  } finally {
-    // Cleanup temp directory
-    fs.rmSync(tempDir, { recursive: true, force: true });
+
+    const topLevelDirs = fs
+      .readdirSync(extractDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory());
+    if (topLevelDirs.length !== 1) {
+      throw new Error(
+        `Unexpected template archive layout. Expected a single top-level directory, found ${topLevelDirs.length}.`,
+      );
+    }
+
+    const topLevelDir = topLevelDirs[0];
+    if (!topLevelDir) {
+      throw new Error(
+        "Unexpected template archive layout. No top-level directory found.",
+      );
+    }
+
+    const templateDir = path.join(extractDir, topLevelDir.name);
+    validateTemplateDir(templateDir);
+    return { tempDir, templateDir };
+  } catch (err) {
+    // Best-effort cleanup on failure; on success the caller cleans up after copy.
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+    throw err;
   }
 }
 
@@ -638,10 +821,13 @@ async function main() {
     includeServer: includeServer as boolean,
   };
 
-  if (!isEmpty(targetDir)) {
+  const targetNotEmpty = !isEmpty(targetDir);
+  let shouldOverwrite = false;
+
+  if (targetNotEmpty) {
     if (nonInteractive) {
       // In non-interactive mode, overwrite without prompting
-      emptyDir(targetDir);
+      shouldOverwrite = true;
     } else {
       const overwrite = await p.confirm({
         message: `Directory "${projectName}" is not empty. Remove existing files?`,
@@ -653,17 +839,17 @@ async function main() {
         process.exit(0);
       }
 
-      // Avoid deleting the directory itself (especially dangerous for `.`).
-      // Instead, remove its contents while preserving `.git/`.
-      emptyDir(targetDir);
+      shouldOverwrite = true;
     }
   }
 
   const s = p.spinner();
   s.start("Downloading template...");
 
+  let downloaded: { tempDir: string; templateDir: string } | undefined;
+
   try {
-    await downloadTemplate(targetDir);
+    downloaded = await downloadTemplateToTemp();
   } catch (error) {
     s.stop("Download failed");
     p.log.error(
@@ -673,17 +859,44 @@ async function main() {
   }
 
   s.message("Creating project...");
-  updatePackageJson(
-    targetDir,
-    config.packageName,
-    config.description,
-    config.includeServer,
-  );
+
+  try {
+    if (!downloaded) {
+      throw new Error(
+        "Internal error: template download did not return a result",
+      );
+    }
+
+    // Only modify the target directory after we have a fully downloaded & validated template.
+    if (shouldOverwrite) {
+      // Avoid deleting the directory itself (especially dangerous for `.`).
+      // Instead, remove its contents while preserving `.git/`.
+      emptyDir(targetDir);
+    }
+
+    fs.mkdirSync(targetDir, { recursive: true });
+    copyDirContents(downloaded.templateDir, targetDir);
+  } finally {
+    if (downloaded?.tempDir) {
+      fs.rmSync(downloaded.tempDir, { recursive: true, force: true });
+    }
+  }
+
+  updatePackageJson(targetDir, config.packageName, config.description, {
+    mcpAppStudioVersion: getVersion(),
+  });
+  if (config.includeServer) {
+    ensureServerPostinstall(targetDir);
+  }
 
   s.message("Applying template...");
   applyTemplate(targetDir, config.template);
 
-  if (!config.includeServer) {
+  writeStudioConfig(targetDir, config.template, path.basename(targetDir));
+
+  if (config.includeServer) {
+    updateServerPackageName(targetDir, config.packageName);
+  } else {
     fs.rmSync(path.join(targetDir, "server"), { recursive: true, force: true });
   }
 
@@ -748,12 +961,8 @@ async function main() {
 
   // Documentation links
   p.log.step(pc.bold("Learn more:"));
-  p.log.message(
-    `  ${pc.dim("•")} SDK Docs:   ${pc.cyan("https://github.com/assistant-ui/mcp-app-studio#sdk")}`,
-  );
-  p.log.message(
-    `  ${pc.dim("•")} Examples:   ${pc.cyan("https://github.com/assistant-ui/mcp-app-studio-starter")}`,
-  );
+  p.log.message(`  ${pc.dim("•")} SDK Docs:   ${pc.cyan(DOCS_URL)}`);
+  p.log.message(`  ${pc.dim("•")} Examples:   ${pc.cyan(EXAMPLES_URL)}`);
   if (config.includeServer) {
     p.log.message(
       `  ${pc.dim("•")} MCP Guide:  ${pc.cyan("https://modelcontextprotocol.io/quickstart")}`,
