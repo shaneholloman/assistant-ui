@@ -151,6 +151,15 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
   }, [results]);
 
   const lastTrackedQuery = useRef("");
+  const searchTrackingTimeout = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  // Use ref to avoid stale closure issues in timeout callbacks
+  const resultsLengthRef = useRef(0);
+  useEffect(() => {
+    resultsLengthRef.current = results.length;
+  }, [results.length]);
+
   useEffect(() => {
     if (open) {
       setInputValue("");
@@ -175,6 +184,17 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
 
   const handleSelect = useCallback(
     (url: string) => {
+      // Flush pending search analytics before navigating
+      if (searchTrackingTimeout.current) {
+        clearTimeout(searchTrackingTimeout.current);
+        if (inputValue.length >= 2 && inputValue !== lastTrackedQuery.current) {
+          lastTrackedQuery.current = inputValue;
+          const resultCount = resultsLengthRef.current;
+          if (resultCount === 0) analytics.search.noResults(inputValue);
+          else analytics.search.querySubmitted(inputValue, resultCount);
+        }
+      }
+
       const position = results.findIndex((r) => r.url === url);
       analytics.search.resultClicked(inputValue, url, position);
       onOpenChange(false);
@@ -183,17 +203,34 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
     [onOpenChange, router, results, inputValue],
   );
 
+  // Debounced search analytics - only track after 500ms of no typing
   useEffect(() => {
+    if (searchTrackingTimeout.current) {
+      clearTimeout(searchTrackingTimeout.current);
+    }
+
+    // Don't track single characters, empty input, or duplicate queries
     if (
       !inputValue ||
+      inputValue.length < 2 ||
       query.isLoading ||
       inputValue === lastTrackedQuery.current
     )
       return;
-    lastTrackedQuery.current = inputValue;
-    if (results.length === 0) analytics.search.noResults(inputValue);
-    else analytics.search.querySubmitted(inputValue, results.length);
-  }, [inputValue, results.length, query.isLoading]);
+
+    searchTrackingTimeout.current = setTimeout(() => {
+      lastTrackedQuery.current = inputValue;
+      const resultCount = resultsLengthRef.current;
+      if (resultCount === 0) analytics.search.noResults(inputValue);
+      else analytics.search.querySubmitted(inputValue, resultCount);
+    }, 500);
+
+    return () => {
+      if (searchTrackingTimeout.current) {
+        clearTimeout(searchTrackingTimeout.current);
+      }
+    };
+  }, [inputValue, query.isLoading]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
