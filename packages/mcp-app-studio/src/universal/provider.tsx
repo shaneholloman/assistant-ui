@@ -7,11 +7,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { detectPlatform } from "./detect";
-import { ChatGPTBridge } from "../platforms/chatgpt/bridge";
 import { MCPBridge, type AppCapabilities } from "../platforms/mcp/bridge";
+import { withChatGPTExtensions } from "../extensions/chatgpt";
 import type { ExtendedBridge } from "../core/bridge";
 import type { Platform } from "../core/types";
+import { detectPlatform } from "./detect";
 
 const UniversalContext = createContext<ExtendedBridge | null>(null);
 const PlatformContext = createContext<Platform>("unknown");
@@ -34,29 +34,30 @@ export function UniversalProvider({
   useEffect(() => {
     let cancelled = false;
 
-    const detected = detectPlatform();
-    setPlatform(detected);
-
-    let newBridge: ExtendedBridge;
-    if (detected === "chatgpt") {
-      newBridge = new ChatGPTBridge();
-    } else if (detected === "mcp") {
-      newBridge = new MCPBridge(appInfo, appCapabilities);
-    } else {
+    const detectedPlatform = detectPlatform();
+    if (detectedPlatform !== "mcp") {
+      setBridge(null);
+      setPlatform("unknown");
       setReady(true);
       return;
     }
+
+    const newBridge = withChatGPTExtensions(
+      new MCPBridge(appInfo, appCapabilities),
+    );
 
     newBridge
       .connect()
       .then(() => {
         if (cancelled) return;
         setBridge(newBridge);
+        setPlatform("mcp");
         setReady(true);
       })
       .catch((error) => {
         if (cancelled) return;
         console.error("[mcp-app-studio] Bridge connection failed:", error);
+        setPlatform("unknown");
         setReady(true);
       });
 
