@@ -1,8 +1,11 @@
-import posthog from "posthog-js";
-import { track as vercelTrack } from "@vercel/analytics";
-
 declare global {
   interface Window {
+    posthog?: {
+      capture?: (
+        event: string,
+        properties?: Record<string, string | number | boolean>,
+      ) => void;
+    };
     umami?: {
       track: (
         event: string,
@@ -12,20 +15,38 @@ declare global {
   }
 }
 
+let vercelTrackPromise:
+  | Promise<
+      | ((
+          event: string,
+          properties?: Record<string, string | number | boolean>,
+        ) => void)
+      | null
+    >
+  | undefined;
+
+const getVercelTrack = () => {
+  if (vercelTrackPromise) return vercelTrackPromise;
+  vercelTrackPromise = import("@vercel/analytics")
+    .then(({ track }) => track)
+    .catch(() => null);
+  return vercelTrackPromise;
+};
+
 const trackEvent = (
   event: string,
   properties?: Record<string, string | number | boolean>,
 ) => {
+  if (typeof window === "undefined") return;
+
   // PostHog
-  posthog.capture?.(event, properties);
+  window.posthog?.capture?.(event, properties);
 
   // Vercel Analytics
-  vercelTrack(event, properties);
+  void getVercelTrack().then((track) => track?.(event, properties));
 
   // Umami
-  if (typeof window !== "undefined") {
-    window.umami?.track(event, properties);
-  }
+  window.umami?.track?.(event, properties);
 };
 
 export const analytics = {
@@ -147,6 +168,63 @@ export const analytics = {
   },
 
   assistant: {
+    panelToggled: (props: { open: boolean; source: "trigger" | "toggle" }) => {
+      trackEvent("assistant_panel_toggled", props);
+    },
+
+    messageSent: (props: {
+      threadId: string;
+      messageId?: string;
+      source: "composer" | "ask_ai";
+      message_length: number;
+      attachments_count: number;
+      pathname?: string;
+      model_name?: string;
+    }) => {
+      trackEvent("assistant_message_sent", props);
+    },
+
+    responseCompleted: (props: {
+      threadId: string;
+      latency_ms?: number;
+      status_reason?: string;
+      response_length: number;
+      tool_calls_count: number;
+      response_total_tokens?: number;
+      response_input_tokens?: number;
+      response_output_tokens?: number;
+      pathname?: string;
+      model_name?: string;
+    }) => {
+      trackEvent("assistant_response_completed", props);
+    },
+
+    responseFailed: (props: {
+      threadId: string;
+      latency_ms?: number;
+      status_reason?: string;
+      response_length: number;
+      tool_calls_count: number;
+      response_total_tokens?: number;
+      response_input_tokens?: number;
+      response_output_tokens?: number;
+      pathname?: string;
+      model_name?: string;
+    }) => {
+      trackEvent("assistant_response_failed", props);
+    },
+
+    newThreadClicked: (props: {
+      threadId?: string;
+      previous_message_count: number;
+      context_total_tokens: number;
+      context_usage_percent: number;
+      pathname?: string;
+      model_name?: string;
+    }) => {
+      trackEvent("assistant_new_thread_clicked", props);
+    },
+
     feedbackSubmitted: (props: {
       threadId: string;
       messageId: string;
@@ -157,16 +235,13 @@ export const analytics = {
         | "didnt_answer"
         | "too_vague"
         | "other";
-      comment?: string;
-      userQuestion: string;
-      assistantResponse: string;
-      toolCalls: Array<{ toolName: string; args: Record<string, unknown> }>;
+      comment_length?: number;
+      user_question_length: number;
+      assistant_response_length: number;
+      tool_calls_count: number;
+      tool_names?: string;
     }) => {
-      const { toolCalls, ...rest } = props;
-      trackEvent("assistant_feedback_submitted", {
-        ...rest,
-        toolCalls: JSON.stringify(toolCalls),
-      });
+      trackEvent("assistant_feedback_submitted", props);
     },
   },
 };
