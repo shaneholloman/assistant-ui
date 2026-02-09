@@ -21,17 +21,13 @@ import { flushResourcesSync } from "@assistant-ui/tap";
 
 export namespace ComposerPrimitiveInput {
   export type Element = HTMLTextAreaElement;
-  export type Props = TextareaAutosizeProps & {
+
+  type BaseProps = {
     /**
      * Whether to render as a child component using Slot.
      * When true, the component will merge its props with its child.
      */
     asChild?: boolean | undefined;
-    /**
-     * Whether to submit the message when Enter is pressed (without Shift).
-     * @default true
-     */
-    submitOnEnter?: boolean | undefined;
     /**
      * Whether to cancel message composition when Escape is pressed.
      * @default true
@@ -58,6 +54,34 @@ export namespace ComposerPrimitiveInput {
      */
     addAttachmentOnPaste?: boolean | undefined;
   };
+
+  type SubmitModeProps =
+    | {
+        /**
+         * Controls how the Enter key submits messages.
+         * - "enter": Plain Enter submits (Shift+Enter for newline)
+         * - "ctrlEnter": Ctrl/Cmd+Enter submits (plain Enter for newline)
+         * - "none": Keyboard submission disabled
+         * @default "enter"
+         */
+        submitMode?: "enter" | "ctrlEnter" | "none" | undefined;
+        /**
+         * @deprecated Use `submitMode` instead
+         * @ignore
+         */
+        submitOnEnter?: never;
+      }
+    | {
+        submitMode?: never;
+        /**
+         * Whether to submit the message when Enter is pressed (without Shift).
+         * @default true
+         * @deprecated Use `submitMode` instead. Will be removed in a future version.
+         */
+        submitOnEnter?: boolean | undefined;
+      };
+
+  export type Props = TextareaAutosizeProps & BaseProps & SubmitModeProps;
 }
 
 /**
@@ -69,10 +93,16 @@ export namespace ComposerPrimitiveInput {
  *
  * @example
  * ```tsx
+ * // Ctrl/Cmd+Enter to submit (plain Enter inserts newline)
+ * <ComposerPrimitive.Input
+ *   placeholder="Type your message..."
+ *   submitMode="ctrlEnter"
+ * />
+ *
+ * // Old API (deprecated, still supported)
  * <ComposerPrimitive.Input
  *   placeholder="Type your message..."
  *   submitOnEnter={true}
- *   addAttachmentOnPaste={true}
  * />
  * ```
  */
@@ -88,7 +118,8 @@ export const ComposerPrimitiveInput = forwardRef<
       onChange,
       onKeyDown,
       onPaste,
-      submitOnEnter = true,
+      submitOnEnter,
+      submitMode,
       cancelOnEscape = true,
       unstable_focusOnRunStart = true,
       unstable_focusOnScrollToBottom = true,
@@ -99,6 +130,9 @@ export const ComposerPrimitiveInput = forwardRef<
     forwardedRef,
   ) => {
     const aui = useAui();
+
+    const effectiveSubmitMode =
+      submitMode ?? (submitOnEnter === false ? "none" : "enter");
 
     const value = useAuiState((s) => {
       if (!s.composer.isEditing) return "";
@@ -128,17 +162,24 @@ export const ComposerPrimitiveInput = forwardRef<
     });
 
     const handleKeyPress = (e: KeyboardEvent) => {
-      if (isDisabled || !submitOnEnter) return;
+      if (isDisabled) return;
 
       // ignore IME composition events
       if (e.nativeEvent.isComposing) return;
 
-      if (e.key === "Enter" && e.shiftKey === false) {
+      if (e.key === "Enter" && !e.shiftKey) {
         const isRunning = aui.thread().getState().isRunning;
+        if (isRunning) return;
 
-        if (!isRunning) {
+        let shouldSubmit = false;
+        if (effectiveSubmitMode === "ctrlEnter") {
+          shouldSubmit = e.ctrlKey || e.metaKey;
+        } else if (effectiveSubmitMode === "enter") {
+          shouldSubmit = true;
+        }
+
+        if (shouldSubmit) {
           e.preventDefault();
-
           textareaRef.current?.closest("form")?.requestSubmit();
         }
       }
