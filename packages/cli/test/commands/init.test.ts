@@ -1,14 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   init,
   createExistingProjectInitPlan,
   isNonInteractiveShell,
 } from "../../src/commands/init";
+import { create } from "../../src/commands/create";
 
 describe("init command", () => {
   it("defaults --yes to false for interactive human flow", () => {
     const yesOption = init.options.find((option) => option.long === "--yes");
     expect(yesOption?.defaultValue).toBe(false);
+  });
+
+  it("accepts --preset as a hidden compatibility option", () => {
+    const presetOption = init.options.find(
+      (option) => option.long === "--preset",
+    );
+    expect(presetOption).toBeDefined();
+    expect((presetOption as { hidden?: boolean } | undefined)?.hidden).toBe(
+      true,
+    );
   });
 
   it("uses interactive add flow when --yes is not passed", () => {
@@ -30,7 +41,7 @@ describe("init command", () => {
     const plan = createExistingProjectInitPlan({
       yes: true,
       overwrite: true,
-      registryUrl: "https://example.com/preset.json",
+      registryUrl: "https://example.com/registry.json",
     });
 
     expect(plan.initArgs).toEqual([
@@ -44,12 +55,46 @@ describe("init command", () => {
       "add",
       "--yes",
       "--overwrite",
-      "https://example.com/preset.json",
+      "https://example.com/registry.json",
     ]);
   });
 
   it("detects non-interactive mode from stdin TTY only", () => {
     expect(isNonInteractiveShell(false)).toBe(true);
     expect(isNonInteractiveShell(true)).toBe(false);
+  });
+
+  it("delegates to create.parseAsync with correct args when no package.json exists", async () => {
+    const parseAsyncSpy = vi
+      .spyOn(create, "parseAsync")
+      .mockResolvedValue(create);
+
+    await init.parseAsync(["node", "init", "my-app", "--use-pnpm"], {
+      from: "node",
+    });
+
+    expect(parseAsyncSpy).toHaveBeenCalledWith(["my-app", "--use-pnpm"], {
+      from: "user",
+    });
+
+    parseAsyncSpy.mockRestore();
+  });
+
+  it("delegates to create.parseAsync with preset args", async () => {
+    const parseAsyncSpy = vi
+      .spyOn(create, "parseAsync")
+      .mockResolvedValue(create);
+
+    await init.parseAsync(
+      ["node", "init", "--preset", "https://example.com/preset.json"],
+      { from: "node" },
+    );
+
+    expect(parseAsyncSpy).toHaveBeenCalledWith(
+      ["--preset", "https://example.com/preset.json"],
+      { from: "user" },
+    );
+
+    parseAsyncSpy.mockRestore();
   });
 });
