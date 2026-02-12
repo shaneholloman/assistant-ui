@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ActionBarPrimitive } from "@assistant-ui/react";
 import { useAui, useAuiState } from "@assistant-ui/store";
 import { ThumbsUpIcon, ThumbsDownIcon } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { analytics } from "@/lib/analytics";
 import { getTextLength, getToolCallToolNames } from "@/lib/assistant-metrics";
@@ -21,8 +22,27 @@ function hasNonWhitespaceText(
   return false;
 }
 
+function getErrorDetails(error: unknown): {
+  error_name: string;
+  error_message: string;
+} {
+  if (error instanceof Error) {
+    return {
+      error_name: error.name,
+      error_message: error.message || "Unknown error",
+    };
+  }
+
+  return {
+    error_name: "UnknownError",
+    error_message: typeof error === "string" ? error : String(error),
+  };
+}
+
 export function AssistantActionBar(): ReactNode {
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const feedbackShownForMessageRef = useRef<string | null>(null);
+  const feedbackSubmissionStartedRef = useRef<string | null>(null);
 
   const aui = useAui();
   const messageId = useAuiState((s) => s.message.id);
@@ -50,6 +70,32 @@ export function AssistantActionBar(): ReactNode {
   const toolNames = getToolCallToolNames(content);
   const toolCallsCount = toolNames.length;
   const assistantHasText = hasNonWhitespaceText(content);
+  const feedbackBaseProps = useMemo(
+    () => ({
+      threadId,
+      messageId,
+      user_question_length: userQuestionLength,
+      assistant_response_length: assistantResponseLength,
+      tool_calls_count: toolCallsCount,
+      ...(toolNames.length > 0 ? { tool_names: toolNames.join(",") } : {}),
+    }),
+    [
+      assistantResponseLength,
+      messageId,
+      threadId,
+      toolCallsCount,
+      toolNames,
+      userQuestionLength,
+    ],
+  );
+
+  useEffect(() => {
+    if (isRunning || !assistantHasText) return;
+    if (feedbackShownForMessageRef.current === messageId) return;
+
+    feedbackShownForMessageRef.current = messageId;
+    analytics.assistant.feedbackShown(feedbackBaseProps);
+  }, [assistantHasText, feedbackBaseProps, isRunning, messageId]);
 
   // Don't show feedback buttons while message is still streaming or if no content
   if (isRunning || !assistantHasText) {
@@ -57,16 +103,31 @@ export function AssistantActionBar(): ReactNode {
   }
 
   const handlePositiveFeedback = () => {
-    if (submittedFeedback) return;
-    aui.message().submitFeedback({ type: "positive" });
-    analytics.assistant.feedbackSubmitted({
-      threadId,
-      messageId,
+    if (submittedFeedback || feedbackSubmissionStartedRef.current === messageId)
+      return;
+    feedbackSubmissionStartedRef.current = messageId;
+
+    analytics.assistant.feedbackClicked({
+      ...feedbackBaseProps,
       type: "positive",
-      user_question_length: userQuestionLength,
-      assistant_response_length: assistantResponseLength,
-      tool_calls_count: toolCallsCount,
-      ...(toolNames.length > 0 ? { tool_names: toolNames.join(",") } : {}),
+    });
+
+    try {
+      aui.message().submitFeedback({ type: "positive" });
+    } catch (error) {
+      feedbackSubmissionStartedRef.current = null;
+      analytics.assistant.feedbackSubmitFailed({
+        ...feedbackBaseProps,
+        type: "positive",
+        ...getErrorDetails(error),
+      });
+      toast.error("Failed to submit feedback. Please try again.");
+      return;
+    }
+
+    analytics.assistant.feedbackSubmitted({
+      ...feedbackBaseProps,
+      type: "positive",
     });
   };
 
@@ -74,18 +135,33 @@ export function AssistantActionBar(): ReactNode {
     category: FeedbackCategory,
     comment?: string,
   ) => {
-    if (submittedFeedback) return;
-    aui.message().submitFeedback({ type: "negative" });
-    analytics.assistant.feedbackSubmitted({
-      threadId,
-      messageId,
-      type: "negative",
+    if (submittedFeedback || feedbackSubmissionStartedRef.current === messageId)
+      return;
+    feedbackSubmissionStartedRef.current = messageId;
+
+    const negativeFeedbackProps = {
+      ...feedbackBaseProps,
+      type: "negative" as const,
       category,
       ...(comment ? { comment_length: comment.length } : {}),
-      user_question_length: userQuestionLength,
-      assistant_response_length: assistantResponseLength,
-      tool_calls_count: toolCallsCount,
-      ...(toolNames.length > 0 ? { tool_names: toolNames.join(",") } : {}),
+    };
+
+    analytics.assistant.feedbackClicked(negativeFeedbackProps);
+
+    try {
+      aui.message().submitFeedback({ type: "negative" });
+    } catch (error) {
+      feedbackSubmissionStartedRef.current = null;
+      analytics.assistant.feedbackSubmitFailed({
+        ...negativeFeedbackProps,
+        ...getErrorDetails(error),
+      });
+      toast.error("Failed to submit feedback. Please try again.");
+      return;
+    }
+
+    analytics.assistant.feedbackSubmitted({
+      ...negativeFeedbackProps,
     });
   };
 
