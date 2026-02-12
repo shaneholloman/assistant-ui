@@ -49,18 +49,22 @@ class AssistantCloudThreadHistoryAdapter implements ThreadHistoryAdapter {
       formatAdapter,
     );
     return {
+      // Note: callers must also call reportTelemetry() for run tracking
       async append(item: MessageFormatItem<TMessage>) {
         const { remoteId } = await adapter.aui.threadListItem().initialize();
         await formatted.append(remoteId, item);
-
-        if (adapter.cloudRef.current.telemetry.enabled) {
-          const encoded = formatAdapter.encode(item);
-          adapter._maybeReportRun(remoteId, formatAdapter.format, encoded);
-        }
+      },
+      async update(item: MessageFormatItem<TMessage>, localMessageId: string) {
+        const remoteId = adapter.aui.threadListItem().getState().remoteId;
+        if (!remoteId) return;
+        await formatted.update?.(remoteId, item, localMessageId);
       },
       reportTelemetry(
         items: MessageFormatItem<TMessage>[],
-        options?: { durationMs?: number },
+        options?: {
+          durationMs?: number;
+          stepTimestamps?: StepTimestamp[];
+        },
       ) {
         const encodedContents = items.map((item) => formatAdapter.encode(item));
         adapter._reportBatchTelemetry(
@@ -110,7 +114,10 @@ class AssistantCloudThreadHistoryAdapter implements ThreadHistoryAdapter {
   private _reportBatchTelemetry<T>(
     format: string,
     contents: T[],
-    options?: { durationMs?: number },
+    options?: {
+      durationMs?: number;
+      stepTimestamps?: StepTimestamp[];
+    },
   ) {
     if (!this.cloudRef.current.telemetry.enabled) return;
 
@@ -120,7 +127,12 @@ class AssistantCloudThreadHistoryAdapter implements ThreadHistoryAdapter {
     const extracted = extractBatchTelemetry(format, contents);
     if (!extracted) return;
 
-    this._sendReport(remoteId, extracted, options?.durationMs);
+    this._sendReport(
+      remoteId,
+      extracted,
+      options?.durationMs,
+      options?.stepTimestamps,
+    );
   }
 
   private _maybeReportRun<T>(remoteId: string, format: string, content: T) {
@@ -134,31 +146,29 @@ class AssistantCloudThreadHistoryAdapter implements ThreadHistoryAdapter {
     remoteId: string,
     data: TelemetryData,
     durationMs?: number,
+    stepTimestamps?: StepTimestamp[],
   ) {
-    const {
-      toolCalls,
-      promptTokens,
-      completionTokens,
-      status,
-      totalSteps,
-      outputText,
-      metadata,
-      steps,
-    } = data;
+    const finalSteps = mergeStepTimestamps(data.steps, stepTimestamps);
 
     const initial: Parameters<typeof this.cloudRef.current.runs.report>[0] = {
       thread_id: remoteId,
-      status,
-      ...(totalSteps != null ? { total_steps: totalSteps } : undefined),
-      ...(toolCalls?.length ? { tool_calls: toolCalls } : undefined),
-      ...(steps?.length ? { steps } : undefined),
-      ...(promptTokens != null ? { prompt_tokens: promptTokens } : undefined),
-      ...(completionTokens != null
-        ? { completion_tokens: completionTokens }
+      status: data.status,
+      ...(data.totalSteps != null
+        ? { total_steps: data.totalSteps }
+        : undefined),
+      ...(data.toolCalls?.length ? { tool_calls: data.toolCalls } : undefined),
+      ...(finalSteps?.length ? { steps: finalSteps } : undefined),
+      ...(data.promptTokens != null
+        ? { prompt_tokens: data.promptTokens }
+        : undefined),
+      ...(data.completionTokens != null
+        ? { completion_tokens: data.completionTokens }
         : undefined),
       ...(durationMs != null ? { duration_ms: durationMs } : undefined),
-      ...(outputText != null ? { output_text: outputText } : undefined),
-      ...(metadata != null ? { metadata } : undefined),
+      ...(data.outputText != null
+        ? { output_text: data.outputText }
+        : undefined),
+      ...(data.metadata != null ? { metadata: data.metadata } : undefined),
     };
 
     const { beforeReport } = this.cloudRef.current.telemetry;
@@ -215,7 +225,25 @@ type TelemetryStepData = {
   prompt_tokens?: number;
   completion_tokens?: number;
   tool_calls?: TelemetryToolCall[];
+  start_ms?: number;
+  end_ms?: number;
 };
+
+type StepTimestamp = { start_ms: number; end_ms: number };
+
+function mergeStepTimestamps(
+  steps: TelemetryStepData[] | undefined,
+  timestamps: StepTimestamp[] | undefined,
+): TelemetryStepData[] | undefined {
+  if (!timestamps) return steps;
+  if (!steps) return timestamps.map((t) => ({ ...t }));
+
+  const len = Math.min(steps.length, timestamps.length);
+  return steps.map((s, i) => ({
+    ...s,
+    ...(i < len ? timestamps[i] : undefined),
+  }));
+}
 
 type TelemetryData = {
   status: "completed" | "incomplete" | "error";
@@ -347,7 +375,8 @@ type AiSdkV6Message = {
 
 function isToolCallPart(p: AiSdkV6Part): boolean {
   if (!p.toolCallId) return false;
-  return p.type === "tool-call" ? !!p.toolName : p.type.startsWith("tool-");
+  if (p.type === "tool-call") return !!p.toolName;
+  return p.type.startsWith("tool-");
 }
 
 function partToToolCall(p: AiSdkV6Part): TelemetryToolCall {
@@ -399,6 +428,7 @@ function buildAiSdkV6Result(
   totalSteps: number,
   metadata?: Record<string, unknown>,
   stepsData?: { tool_calls: TelemetryToolCall[] }[],
+  usage?: { promptTokens?: number; completionTokens?: number },
 ): TelemetryData {
   const hasText = textParts.length > 0;
   const outputText = hasText ? truncateStr(textParts.join("")) : undefined;
@@ -414,10 +444,53 @@ function buildAiSdkV6Result(
     status: hasText ? "completed" : "incomplete",
     ...(toolCalls.length ? { toolCalls } : undefined),
     ...(totalSteps > 0 ? { totalSteps } : undefined),
+    ...(usage?.promptTokens != null
+      ? { promptTokens: usage.promptTokens }
+      : undefined),
+    ...(usage?.completionTokens != null
+      ? { completionTokens: usage.completionTokens }
+      : undefined),
     ...(outputText != null ? { outputText } : undefined),
     ...(metadata != null ? { metadata } : undefined),
     ...(steps != null ? { steps } : undefined),
   };
+}
+
+function extractAiSdkV6Usage(
+  metadata?: Record<string, unknown>,
+): { promptTokens?: number; completionTokens?: number } | undefined {
+  // Try top-level metadata.usage
+  const usage = metadata?.usage as
+    | { promptTokens?: number; completionTokens?: number }
+    | undefined;
+  if (usage?.promptTokens != null || usage?.completionTokens != null) {
+    return usage;
+  }
+
+  // Try aggregating from metadata.steps[].usage
+  const steps = metadata?.steps as
+    | readonly {
+        usage?: { promptTokens?: number; completionTokens?: number };
+      }[]
+    | undefined;
+  if (steps && steps.length > 0) {
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let hasAny = false;
+    for (const s of steps) {
+      if (s.usage?.promptTokens != null) {
+        promptTokens += s.usage.promptTokens;
+        hasAny = true;
+      }
+      if (s.usage?.completionTokens != null) {
+        completionTokens += s.usage.completionTokens;
+        hasAny = true;
+      }
+    }
+    if (hasAny) return { promptTokens, completionTokens };
+  }
+
+  return undefined;
 }
 
 function extractAiSdkV6<T>(content: T): TelemetryData | null {
@@ -433,6 +506,7 @@ function extractAiSdkV6<T>(content: T): TelemetryData | null {
     stepsData.length,
     msg.metadata,
     stepsData,
+    extractAiSdkV6Usage(msg.metadata),
   );
 }
 
@@ -442,6 +516,9 @@ function extractAiSdkV6Batch<T>(contents: T[]): TelemetryData | null {
   const allStepsData: { tool_calls: TelemetryToolCall[] }[] = [];
   let hasAssistant = false;
   let metadata: Record<string, unknown> | undefined;
+  let aggregatedUsage:
+    | { promptTokens: number; completionTokens: number }
+    | undefined;
 
   for (const content of contents) {
     const msg = content as AiSdkV6Message;
@@ -455,6 +532,14 @@ function extractAiSdkV6Batch<T>(contents: T[]): TelemetryData | null {
     allToolCalls.push(...toolCalls);
     allStepsData.push(...stepsData);
     if (msg.metadata) metadata = msg.metadata;
+
+    const usage = extractAiSdkV6Usage(msg.metadata);
+    if (usage) {
+      if (!aggregatedUsage)
+        aggregatedUsage = { promptTokens: 0, completionTokens: 0 };
+      aggregatedUsage.promptTokens += usage.promptTokens ?? 0;
+      aggregatedUsage.completionTokens += usage.completionTokens ?? 0;
+    }
   }
 
   if (!hasAssistant) return null;
@@ -464,6 +549,7 @@ function extractAiSdkV6Batch<T>(contents: T[]): TelemetryData | null {
     allStepsData.length,
     metadata,
     allStepsData,
+    aggregatedUsage,
   );
 }
 

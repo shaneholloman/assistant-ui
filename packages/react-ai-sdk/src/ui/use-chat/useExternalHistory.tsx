@@ -50,7 +50,7 @@ export const useExternalHistory = <TMessage,>(
 
   const historyIds = useRef(new Set<string>());
 
-  const onSetMessagesRef = useRef<typeof onSetMessages>(() => onSetMessages);
+  const onSetMessagesRef = useRef(onSetMessages);
   useEffect(() => {
     onSetMessagesRef.current = onSetMessages;
   });
@@ -87,15 +87,14 @@ export const useExternalHistory = <TMessage,>(
       }
     };
 
-    if (!loadedRef.current) {
-      loadedRef.current = true;
-      if (!optionalThreadListItem()?.getState().remoteId) {
-        setIsLoading(false);
-        return;
-      }
+    loadedRef.current = true;
 
-      loadHistory();
+    if (!optionalThreadListItem()?.getState().remoteId) {
+      setIsLoading(false);
+      return;
     }
+
+    loadHistory();
   }, [
     historyAdapter,
     storageFormatAdapter,
@@ -105,94 +104,148 @@ export const useExternalHistory = <TMessage,>(
   ]);
 
   const runStartRef = useRef<number | null>(null);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stepBoundariesRef = useRef<number[]>([]);
+  const wasRunningRef = useRef(false);
 
   useEffect(() => {
-    return runtimeRef.current.thread.subscribe(async () => {
-      const { messages, isRunning } = runtimeRef.current.thread.getState();
+    const unsubscribe = runtimeRef.current.thread.subscribe(() => {
+      const { isRunning } = runtimeRef.current.thread.getState();
+      const wasRunning = wasRunningRef.current;
+      wasRunningRef.current = isRunning;
 
       if (isRunning) {
         if (runStartRef.current == null) {
           runStartRef.current = Date.now();
+          stepBoundariesRef.current = [];
+        }
+        // Cancel any pending persist — isRunning went back to true
+        if (persistTimerRef.current) {
+          clearTimeout(persistTimerRef.current);
+          persistTimerRef.current = null;
         }
         return;
       }
 
-      const durationMs =
-        runStartRef.current != null
-          ? Date.now() - runStartRef.current
-          : undefined;
-      runStartRef.current = null;
+      // Only act on the true→false transition
+      if (!wasRunning) return;
 
-      let lastInnerMessageId: string | null = null;
-
-      for (let i = 0; i < messages.length; i++) {
-        const message = messages[i]!;
-        const innerMessages = getExternalStoreMessages<TMessage>(message);
-
-        const isReady =
-          message.status === undefined ||
-          message.status.type === "complete" ||
-          message.status.type === "incomplete";
-
-        if (!isReady) {
-          if (innerMessages.length > 0) {
-            lastInnerMessageId = storageFormatAdapter.getId(
-              innerMessages[innerMessages.length - 1]!,
-            );
-          }
-          continue;
-        }
-
-        if (historyIds.current.has(message.id)) {
-          if (durationMs !== undefined) {
-            const formatAdapter =
-              historyAdapter?.withFormat?.(storageFormatAdapter);
-            let parentId = lastInnerMessageId;
-            for (const innerMessage of innerMessages) {
-              const localId = storageFormatAdapter.getId(innerMessage);
-              try {
-                await formatAdapter?.update?.(
-                  { parentId, message: innerMessage },
-                  localId,
-                );
-              } catch {
-                // ignore update failures to avoid breaking the message processing loop
-              }
-              parentId = storageFormatAdapter.getId(innerMessage);
-            }
-          }
-          if (innerMessages.length > 0) {
-            lastInnerMessageId = storageFormatAdapter.getId(
-              innerMessages[innerMessages.length - 1]!,
-            );
-          }
-          continue;
-        }
-        historyIds.current.add(message.id);
-
-        const formatAdapter =
-          historyAdapter?.withFormat?.(storageFormatAdapter);
-
-        const batchItems: { parentId: string | null; message: TMessage }[] = [];
-        let parentId = lastInnerMessageId;
-        for (const innerMessage of innerMessages) {
-          const item = { parentId, message: innerMessage };
-          batchItems.push(item);
-          await formatAdapter?.append(item);
-          parentId = storageFormatAdapter.getId(innerMessage);
-        }
-
-        if (innerMessages.length > 0) {
-          lastInnerMessageId = storageFormatAdapter.getId(
-            innerMessages[innerMessages.length - 1]!,
-          );
-        }
-
-        formatAdapter?.reportTelemetry?.(batchItems, {
-          ...(durationMs != null ? { durationMs } : undefined),
-        });
+      // Record step boundary offset (synchronous for accuracy)
+      if (runStartRef.current != null) {
+        stepBoundariesRef.current.push(Date.now() - runStartRef.current);
       }
+
+      // Debounce: wait one macrotask so agentic step flickers are absorbed
+      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = setTimeout(async () => {
+        persistTimerRef.current = null;
+
+        // Re-read latest state — may have changed since the timeout was scheduled
+        const latest = runtimeRef.current.thread.getState();
+        if (latest.isRunning) return; // was just a flicker
+
+        // Derive durationMs from the last boundary (covers all steps)
+        const boundaries = stepBoundariesRef.current;
+        const durationMs =
+          boundaries.length > 0 ? boundaries.at(-1) : undefined;
+
+        // Build per-step timestamps when there are multiple steps
+        const stepTimestamps =
+          boundaries.length > 1
+            ? boundaries.map((endMs, i) => ({
+                start_ms: i === 0 ? 0 : boundaries[i - 1]!,
+                end_ms: endMs,
+              }))
+            : undefined;
+
+        runStartRef.current = null;
+        stepBoundariesRef.current = [];
+
+        const telemetryOptions = {
+          ...(durationMs != null ? { durationMs } : undefined),
+          ...(stepTimestamps != null ? { stepTimestamps } : undefined),
+        };
+
+        const { messages } = latest;
+        let lastInnerMessageId: string | null = null;
+
+        const getLastInnerId = (msgs: TMessage[]): string | null =>
+          msgs.length > 0 ? storageFormatAdapter.getId(msgs.at(-1)!) : null;
+
+        const toBatchItems = (msgs: TMessage[]) =>
+          msgs.map((msg, idx) => ({
+            parentId:
+              idx === 0
+                ? lastInnerMessageId
+                : storageFormatAdapter.getId(msgs[idx - 1]!),
+            message: msg,
+          }));
+
+        for (const message of messages) {
+          const innerMessages = getExternalStoreMessages<TMessage>(message);
+
+          const isReady =
+            message.status === undefined ||
+            message.status.type === "complete" ||
+            message.status.type === "incomplete";
+
+          if (!isReady) {
+            lastInnerMessageId =
+              getLastInnerId(innerMessages) ?? lastInnerMessageId;
+            continue;
+          }
+
+          if (historyIds.current.has(message.id)) {
+            if (durationMs !== undefined) {
+              const formatAdapter =
+                historyAdapter?.withFormat?.(storageFormatAdapter);
+              let parentId = lastInnerMessageId;
+              for (const innerMessage of innerMessages) {
+                try {
+                  await formatAdapter?.update?.(
+                    { parentId, message: innerMessage },
+                    storageFormatAdapter.getId(innerMessage),
+                  );
+                } catch {
+                  // ignore update failures to avoid breaking the message processing loop
+                }
+                parentId = storageFormatAdapter.getId(innerMessage);
+              }
+
+              formatAdapter?.reportTelemetry?.(
+                toBatchItems(innerMessages),
+                telemetryOptions,
+              );
+            }
+            lastInnerMessageId =
+              getLastInnerId(innerMessages) ?? lastInnerMessageId;
+            continue;
+          }
+          historyIds.current.add(message.id);
+
+          const formatAdapter =
+            historyAdapter?.withFormat?.(storageFormatAdapter);
+
+          const batchItems = toBatchItems(innerMessages);
+          for (const item of batchItems) {
+            await formatAdapter?.append(item);
+          }
+
+          lastInnerMessageId =
+            getLastInnerId(innerMessages) ?? lastInnerMessageId;
+
+          formatAdapter?.reportTelemetry?.(batchItems, telemetryOptions);
+        }
+      }, 0);
     });
+
+    return () => {
+      unsubscribe();
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+    };
   }, [historyAdapter, storageFormatAdapter, runtimeRef]);
 
   return isLoading;
