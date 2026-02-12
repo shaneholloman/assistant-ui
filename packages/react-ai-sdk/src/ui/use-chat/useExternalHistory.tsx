@@ -134,7 +134,33 @@ export const useExternalHistory = <TMessage,>(
           message.status.type === "complete" ||
           message.status.type === "incomplete";
 
-        if (!isReady || historyIds.current.has(message.id)) {
+        if (!isReady) {
+          if (innerMessages.length > 0) {
+            lastInnerMessageId = storageFormatAdapter.getId(
+              innerMessages[innerMessages.length - 1]!,
+            );
+          }
+          continue;
+        }
+
+        if (historyIds.current.has(message.id)) {
+          if (durationMs !== undefined) {
+            const formatAdapter =
+              historyAdapter?.withFormat?.(storageFormatAdapter);
+            let parentId = lastInnerMessageId;
+            for (const innerMessage of innerMessages) {
+              const localId = storageFormatAdapter.getId(innerMessage);
+              try {
+                await formatAdapter?.update?.(
+                  { parentId, message: innerMessage },
+                  localId,
+                );
+              } catch {
+                // ignore update failures to avoid breaking the message processing loop
+              }
+              parentId = storageFormatAdapter.getId(innerMessage);
+            }
+          }
           if (innerMessages.length > 0) {
             lastInnerMessageId = storageFormatAdapter.getId(
               innerMessages[innerMessages.length - 1]!,

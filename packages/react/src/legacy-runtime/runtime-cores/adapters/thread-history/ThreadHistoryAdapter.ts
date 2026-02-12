@@ -12,6 +12,10 @@ import {
 export type GenericThreadHistoryAdapter<TMessage> = {
   load(): Promise<MessageFormatRepository<TMessage>>;
   append(item: MessageFormatItem<TMessage>): Promise<void>;
+  update?(
+    item: MessageFormatItem<TMessage>,
+    localMessageId: string,
+  ): Promise<void>;
   reportTelemetry?(
     items: MessageFormatItem<TMessage>[],
     options?: { durationMs?: number },
@@ -24,7 +28,7 @@ export type ThreadHistoryAdapter = {
     options: ChatModelRunOptions,
   ): AsyncGenerator<ChatModelRunResult, void, unknown>;
   append(item: ExportedMessageRepositoryItem): Promise<void>;
-  withFormat?<TMessage, TStorageFormat>(
+  withFormat?<TMessage, TStorageFormat extends Record<string, unknown>>(
     formatAdapter: MessageFormatAdapter<TMessage, TStorageFormat>,
   ): GenericThreadHistoryAdapter<TMessage>;
 };
