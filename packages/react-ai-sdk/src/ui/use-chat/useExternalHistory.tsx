@@ -55,7 +55,6 @@ export const useExternalHistory = <TMessage,>(
     onSetMessagesRef.current = onSetMessages;
   });
 
-  // Load messages from history adapter on mount
   useEffect(() => {
     if (!historyAdapter || loadedRef.current) return;
 
@@ -105,27 +104,67 @@ export const useExternalHistory = <TMessage,>(
     optionalThreadListItem,
   ]);
 
+  const runStartRef = useRef<number | null>(null);
+
   useEffect(() => {
     return runtimeRef.current.thread.subscribe(async () => {
       const { messages, isRunning } = runtimeRef.current.thread.getState();
-      if (isRunning) return;
+
+      if (isRunning) {
+        if (runStartRef.current == null) {
+          runStartRef.current = Date.now();
+        }
+        return;
+      }
+
+      const durationMs =
+        runStartRef.current != null
+          ? Date.now() - runStartRef.current
+          : undefined;
+      runStartRef.current = null;
+
+      let lastInnerMessageId: string | null = null;
 
       for (let i = 0; i < messages.length; i++) {
         const message = messages[i]!;
-        if (
+        const innerMessages = getExternalStoreMessages<TMessage>(message);
+
+        const isReady =
           message.status === undefined ||
           message.status.type === "complete" ||
-          message.status.type === "incomplete"
-        ) {
-          if (historyIds.current.has(message.id)) continue;
-          historyIds.current.add(message.id);
+          message.status.type === "incomplete";
 
-          const parentId = i > 0 ? messages[i - 1]!.id : null;
-          await historyAdapter?.withFormat?.(storageFormatAdapter).append({
-            parentId,
-            message: getExternalStoreMessages<TMessage>(message)[0]!,
-          });
+        if (!isReady || historyIds.current.has(message.id)) {
+          if (innerMessages.length > 0) {
+            lastInnerMessageId = storageFormatAdapter.getId(
+              innerMessages[innerMessages.length - 1]!,
+            );
+          }
+          continue;
         }
+        historyIds.current.add(message.id);
+
+        const formatAdapter =
+          historyAdapter?.withFormat?.(storageFormatAdapter);
+
+        const batchItems: { parentId: string | null; message: TMessage }[] = [];
+        let parentId = lastInnerMessageId;
+        for (const innerMessage of innerMessages) {
+          const item = { parentId, message: innerMessage };
+          batchItems.push(item);
+          await formatAdapter?.append(item);
+          parentId = storageFormatAdapter.getId(innerMessage);
+        }
+
+        if (innerMessages.length > 0) {
+          lastInnerMessageId = storageFormatAdapter.getId(
+            innerMessages[innerMessages.length - 1]!,
+          );
+        }
+
+        formatAdapter?.reportTelemetry?.(batchItems, {
+          ...(durationMs != null ? { durationMs } : undefined),
+        });
       }
     });
   }, [historyAdapter, storageFormatAdapter, runtimeRef]);
