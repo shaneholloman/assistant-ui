@@ -78,7 +78,9 @@ export const useSmooth = (
   const id = useAuiState((s) => s.message.id);
 
   const idRef = useRef(id);
-  const [displayedText, setDisplayedText] = useState(text);
+  const [displayedText, setDisplayedText] = useState(
+    state.status.type === "running" ? "" : text,
+  );
 
   const smoothStatusStore = useSmoothStatusStore({ optional: true });
   const setText = useCallbackRef((text: string) => {
@@ -104,7 +106,7 @@ export const useSmooth = (
   }, [smoothStatusStore, smooth, text, displayedText, state.status]);
 
   const [animatorRef] = useState<TextStreamAnimator>(
-    new TextStreamAnimator(text, setText),
+    new TextStreamAnimator(displayedText, setText),
   );
 
   useEffect(() => {
@@ -115,18 +117,27 @@ export const useSmooth = (
 
     if (idRef.current !== id || !text.startsWith(animatorRef.targetText)) {
       idRef.current = id;
-      setText(text);
 
-      animatorRef.currentText = text;
-      animatorRef.targetText = text;
-      animatorRef.stop();
+      if (state.status.type === "running") {
+        // New streaming message → animate from empty string
+        setText("");
+        animatorRef.currentText = "";
+        animatorRef.targetText = text;
+        animatorRef.start();
+      } else {
+        // Completed message → display immediately
+        setText(text);
+        animatorRef.currentText = text;
+        animatorRef.targetText = text;
+        animatorRef.stop();
+      }
 
       return;
     }
 
     animatorRef.targetText = text;
     animatorRef.start();
-  }, [setText, animatorRef, id, smooth, text]);
+  }, [setText, animatorRef, id, smooth, text, state.status.type]);
 
   useEffect(() => {
     return () => {
