@@ -1,10 +1,10 @@
-import { resource, tapEffect, tapInlineResource } from "@assistant-ui/tap";
+import { resource, tapEffect, tapResource } from "@assistant-ui/tap";
 import type { AssistantRuntime } from "./runtime/AssistantRuntime";
 import { ThreadListClient } from "./client/ThreadListRuntimeClient";
 import {
   tapAssistantClientRef,
   Derived,
-  attachDefaultPeers,
+  attachTransformScopes,
 } from "@assistant-ui/store";
 import { ModelContext } from "../client/ModelContextClient";
 import { Tools, Suggestions } from "../model-context";
@@ -18,7 +18,7 @@ export const RuntimeAdapter = resource((runtime: AssistantRuntime) => {
     );
   }, [runtime, clientRef]);
 
-  return tapInlineResource(
+  return tapResource(
     ThreadListClient({
       runtime: runtime.threads,
       __internal_assistantRuntime: runtime,
@@ -26,23 +26,41 @@ export const RuntimeAdapter = resource((runtime: AssistantRuntime) => {
   );
 });
 
-attachDefaultPeers(RuntimeAdapter, {
-  modelContext: ModelContext(),
-  tools: Tools({}),
-  suggestions: Suggestions(),
-  threadListItem: Derived({
-    source: "threads",
-    query: { type: "main" },
-    get: (aui) => aui.threads().item("main"),
-  }),
-  thread: Derived({
-    source: "threads",
-    query: { type: "main" },
-    get: (aui) => aui.threads().thread("main"),
-  }),
-  composer: Derived({
-    source: "thread",
-    query: {},
-    get: (aui) => aui.threads().thread("main").composer,
-  }),
+attachTransformScopes(RuntimeAdapter, (scopes, parent) => {
+  const result = {
+    ...scopes,
+    thread:
+      scopes.thread ??
+      Derived({
+        source: "threads",
+        query: { type: "main" },
+        get: (aui) => aui.threads().thread("main"),
+      }),
+    threadListItem:
+      scopes.threadListItem ??
+      Derived({
+        source: "threads",
+        query: { type: "main" },
+        get: (aui) => aui.threads().item("main"),
+      }),
+    composer:
+      scopes.composer ??
+      Derived({
+        source: "thread",
+        query: {},
+        get: (aui) => aui.threads().thread("main").composer(),
+      }),
+  };
+
+  if (!result.modelContext && parent.modelContext.source === null) {
+    result.modelContext = ModelContext();
+  }
+  if (!result.tools && parent.tools.source === null) {
+    result.tools = Tools({});
+  }
+  if (!result.suggestions && parent.suggestions.source === null) {
+    result.suggestions = Suggestions();
+  }
+
+  return result;
 });

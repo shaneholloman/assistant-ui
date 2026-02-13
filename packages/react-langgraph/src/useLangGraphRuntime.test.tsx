@@ -68,16 +68,18 @@ describe("useLangGraphRuntime", () => {
     );
 
     const wrapper = wrapperFactory(runtimeResult.current);
-
-    const { result: sendResult } = renderHook(() => useLangGraphSend(), {
+    const {
+      result: { current: sendResult },
+    } = renderHook(() => useLangGraphSend(), {
       wrapper,
     });
 
-    // Wait a tick for the runtime to be fully mounted
-    await Promise.resolve();
+    // Wait two ticks for the runtime to be fully mounted
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     act(() => {
-      sendResult.current(
+      sendResult(
         [
           {
             type: "human",

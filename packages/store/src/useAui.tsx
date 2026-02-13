@@ -6,12 +6,11 @@ import {
   tapMemo,
   tapResources,
   tapEffectEvent,
-  tapInlineResource,
   tapEffect,
   tapRef,
   tapResource,
   withKey,
-  tapSubscribableResource,
+  tapResourceRoot,
 } from "@assistant-ui/tap";
 import type {
   AssistantClient,
@@ -81,7 +80,7 @@ const RootClientAccessorResource = resource(
     clientRef: { parent: AssistantClient; current: AssistantClient | null };
     name: K;
   }): AssistantClientAccessor<K> => {
-    const store = tapSubscribableResource(
+    const store = tapResourceRoot(
       RootClientResource({ element, emit: notifications.emit, clientRef }),
     );
 
@@ -129,7 +128,7 @@ const RootClientsAccessorsResource = resource(
     clients: RootClients;
     clientRef: { parent: AssistantClient; current: AssistantClient | null };
   }) => {
-    const notifications = tapInlineResource(NotificationManager());
+    const notifications = tapResource(NotificationManager());
 
     tapEffect(
       () => clientRef.parent.subscribe(notifications.notifySubscribers),
@@ -318,7 +317,7 @@ export const AssistantClientResource = resource(
         : NoOpRootClientsAccessorsResource(),
     );
 
-    const derivedFields = tapInlineResource(
+    const derivedFields = tapResource(
       DerivedClientsAccessorsResource({ clients: derivedClients, clientRef }),
     );
 
