@@ -13,26 +13,23 @@ export type {
   // Message parts
   TextMessagePart,
   ReasoningMessagePart,
+  SourceMessagePart,
   ToolCallMessagePart,
   ImageMessagePart,
+  FileMessagePart,
+  DataMessagePart,
+  Unstable_AudioMessagePart,
   ThreadUserMessagePart,
   ThreadAssistantMessagePart,
   // Runtime types
   AssistantRuntime,
   ThreadRuntime,
-  ThreadState,
   MessageRuntime,
-  MessageState,
   ThreadComposerRuntime,
-  ThreadComposerState,
   EditComposerRuntime,
-  EditComposerState,
   ComposerRuntime,
-  ComposerState,
   ThreadListRuntime,
-  ThreadListState,
   ThreadListItemRuntime,
-  ThreadListItemState,
   // Runtime core types
   ChatModelAdapter,
   ChatModelRunOptions,
@@ -42,26 +39,33 @@ export type {
   Attachment,
   PendingAttachment,
   AttachmentRuntime,
-  AttachmentState,
   // Other
   Unsubscribe,
 } from "@assistant-ui/core";
 
-// Context providers and hooks
+// Re-export store scope state types
+export type {
+  ThreadState,
+  ThreadsState,
+  MessageState,
+  ComposerState,
+  AttachmentState,
+  ThreadListItemState,
+} from "@assistant-ui/core/store";
+
+// Store hooks
 export {
-  AssistantProvider,
-  useAssistantRuntime,
-  ThreadProvider,
-  useThreadRuntime,
-  MessageProvider,
-  useMessageRuntime,
-  ComposerProvider,
-  useComposerRuntime,
-} from "./context";
+  useAui,
+  useAuiState,
+  useAuiEvent,
+  AuiProvider,
+} from "@assistant-ui/store";
+
+// Context providers and hooks
+export { AssistantProvider, useAssistantRuntime } from "./context";
 
 // State hooks
 export {
-  useRuntimeState,
   useThread,
   useMessage,
   useComposer,
@@ -78,6 +82,14 @@ export {
   useComposerCancel,
   useMessageReload,
   useMessageBranching,
+  useActionBarCopy,
+  type UseActionBarCopyOptions,
+  useActionBarEdit,
+  useActionBarReload,
+  useActionBarFeedbackPositive,
+  useActionBarFeedbackNegative,
+  useEditComposerSend,
+  useEditComposerCancel,
 } from "./primitive-hooks";
 
 // Runtime
@@ -88,6 +100,8 @@ export * from "./primitives/thread";
 export * from "./primitives/composer";
 export * from "./primitives/message";
 export * from "./primitives/threadList";
+export * from "./primitives/actionBar";
+export * from "./primitives/branchPicker";
 
 // Adapters
 export {

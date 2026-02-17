@@ -1,20 +1,31 @@
 import { View, StyleSheet, useColorScheme } from "react-native";
 import { ThemedText } from "@/components/themed-text";
-import type { ThreadMessage } from "@assistant-ui/react-native";
+import { useMessage, MessageContent } from "@assistant-ui/react-native";
+import { MessageActionBar } from "./message-action-bar";
+import { MessageBranchPicker } from "./message-branch-picker";
 
-type MessageBubbleProps = {
-  message: ThreadMessage;
-};
+function TextPart({ part }: { part: { type: "text"; text: string } }) {
+  const role = useMessage((s) => s.role);
+  if (role === "user") {
+    return <ThemedText style={styles.userText}>{part.text}</ThemedText>;
+  }
+  return (
+    <ThemedText
+      style={styles.assistantText}
+      lightColor="#000000"
+      darkColor="#ffffff"
+    >
+      {part.text}
+    </ThemedText>
+  );
+}
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
-  const isUser = message.role === "user";
-
-  const textContent = message.content
-    .filter((part) => part.type === "text")
-    .map((part) => ("text" in part ? part.text : ""))
-    .join("\n");
+  const role = useMessage((s) => s.role);
+  const isRunning = useMessage((s) => s.status?.type === "running");
+  const isUser = role === "user";
 
   if (isUser) {
     return (
@@ -26,8 +37,9 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             { backgroundColor: isDark ? "#0a84ff" : "#007aff" },
           ]}
         >
-          <ThemedText style={styles.userText}>{textContent}</ThemedText>
+          <MessageContent renderText={({ part }) => <TextPart part={part} />} />
         </View>
+        <MessageBranchPicker />
       </View>
     );
   }
@@ -45,14 +57,14 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           },
         ]}
       >
-        <ThemedText
-          style={styles.assistantText}
-          lightColor="#000000"
-          darkColor="#ffffff"
-        >
-          {textContent}
-        </ThemedText>
+        <MessageContent renderText={({ part }) => <TextPart part={part} />} />
       </View>
+      {!isRunning && (
+        <View style={styles.actionsRow}>
+          <MessageBranchPicker />
+          <MessageActionBar />
+        </View>
+      )}
     </View>
   );
 }
@@ -76,6 +88,12 @@ const styles = StyleSheet.create({
   },
   userBubble: {
     borderBottomRightRadius: 6,
+  },
+  actionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 4,
   },
   assistantBubble: {
     borderBottomLeftRadius: 6,

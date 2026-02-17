@@ -2,9 +2,12 @@ import { useCallback } from "react";
 import { TextInput, type TextInputProps } from "react-native";
 import { useAui, useAuiState } from "@assistant-ui/store";
 
-export type ComposerInputProps = Omit<TextInputProps, "value" | "onChangeText">;
+export type EditComposerInputProps = Omit<
+  TextInputProps,
+  "value" | "onChangeText"
+>;
 
-export const ComposerInput = (props: ComposerInputProps) => {
+export const EditComposerInput = (props: EditComposerInputProps) => {
   const aui = useAui();
   const text = useAuiState((s) => s.composer.text);
 

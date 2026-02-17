@@ -1,77 +1,66 @@
-import { useRef, useEffect } from "react";
 import {
   View,
   Text,
-  FlatList,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
   useColorScheme,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { MessageBubble } from "./MessageBubble";
-import { ChatComposer } from "./ChatComposer";
-import { useThread, type ThreadMessage } from "@assistant-ui/react-native";
+import { MessageBubble } from "./message";
+import { Composer } from "./composer";
+import { ThreadMessages, useThreadIsEmpty } from "@assistant-ui/react-native";
 
-function ChatMessages() {
-  const flatListRef = useRef<FlatList>(null);
+function EmptyState() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
-  const messages = useThread((s) => s.messages) as ThreadMessage[];
-  const isEmpty = messages.length === 0;
 
-  useEffect(() => {
-    if (messages.length > 0) {
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
-    }
-  }, [messages.length]);
-
-  if (isEmpty) {
-    return (
-      <View
+  return (
+    <View
+      style={[
+        styles.emptyContainer,
+        { backgroundColor: isDark ? "#000000" : "#ffffff" },
+      ]}
+    >
+      <View style={styles.emptyIconContainer}>
+        <Text style={styles.emptyIcon}>💭</Text>
+      </View>
+      <Text
+        style={[styles.emptyTitle, { color: isDark ? "#ffffff" : "#000000" }]}
+      >
+        How can I help?
+      </Text>
+      <Text
         style={[
-          styles.emptyContainer,
-          { backgroundColor: isDark ? "#000000" : "#ffffff" },
+          styles.emptySubtitle,
+          { color: isDark ? "#8e8e93" : "#6e6e73" },
         ]}
       >
-        <View style={styles.emptyIconContainer}>
-          <Text style={styles.emptyIcon}>💭</Text>
-        </View>
-        <Text
-          style={[styles.emptyTitle, { color: isDark ? "#ffffff" : "#000000" }]}
-        >
-          How can I help?
-        </Text>
-        <Text
-          style={[
-            styles.emptySubtitle,
-            { color: isDark ? "#8e8e93" : "#6e6e73" },
-          ]}
-        >
-          Send a message to start chatting
-        </Text>
-      </View>
-    );
+        Send a message to start chatting
+      </Text>
+    </View>
+  );
+}
+
+const renderMessage = () => <MessageBubble />;
+
+function ChatMessages() {
+  const isEmpty = useThreadIsEmpty();
+
+  if (isEmpty) {
+    return <EmptyState />;
   }
 
   return (
-    <FlatList
-      ref={flatListRef}
-      data={messages}
-      keyExtractor={(item) => item.id}
-      renderItem={({ item }) => <MessageBubble message={item} />}
+    <ThreadMessages
+      renderMessage={renderMessage}
       contentContainerStyle={styles.messageList}
       showsVerticalScrollIndicator={false}
-      onContentSizeChange={() => {
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }}
     />
   );
 }
 
-export function ChatScreen() {
+export function Thread() {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
@@ -90,7 +79,7 @@ export function ChatScreen() {
           <ChatMessages />
         </View>
         <View style={{ paddingBottom: insets.bottom }}>
-          <ChatComposer />
+          <Composer />
         </View>
       </KeyboardAvoidingView>
     </View>
