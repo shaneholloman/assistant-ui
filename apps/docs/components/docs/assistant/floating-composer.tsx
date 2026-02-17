@@ -3,6 +3,7 @@
 import {
   AssistantComposerAction,
   useComposerSubmitHandler,
+  useSharedDocsModelSelection,
 } from "@/components/docs/assistant/composer";
 import { useAssistantPanel } from "@/components/docs/assistant/context";
 import { ModelSelector } from "@/components/assistant-ui/model-selector";
@@ -76,7 +77,9 @@ export function FloatingComposer(): ReactNode {
   const { open, setOpen } = useAssistantPanel();
   const isEmpty = useAuiState((s) => s.composer.isEmpty);
   const threadIsEmpty = useAuiState((s) => s.thread.isEmpty);
+  const { modelValue, onModelChange } = useSharedDocsModelSelection();
   const [expanded, setExpanded] = useState(false);
+  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const hasScrolled = useHasScrolled(100);
@@ -89,13 +92,19 @@ export function FloatingComposer(): ReactNode {
     }
   }, [visible]);
 
+  useEffect(() => {
+    if (!visible || !expanded) {
+      setModelSelectorOpen(false);
+    }
+  }, [visible, expanded]);
+
   // Click outside to collapse (only when composer is empty)
   useClickOutside(
     containerRef,
     useCallback(() => {
       if (isEmpty) setExpanded(false);
     }, [isEmpty]),
-    expanded,
+    expanded && !modelSelectorOpen,
   );
 
   const handleSubmit = useComposerSubmitHandler(() => setOpen(true));
@@ -160,7 +169,15 @@ export function FloatingComposer(): ReactNode {
               <div className="flex items-center justify-between">
                 <ModelSelector
                   models={models}
-                  defaultValue={MODELS[0].value}
+                  value={modelValue}
+                  onValueChange={onModelChange}
+                  open={modelSelectorOpen}
+                  onOpenChange={(nextOpen) => {
+                    setModelSelectorOpen(nextOpen);
+                    if (nextOpen && !expanded) {
+                      setExpanded(true);
+                    }
+                  }}
                   variant="ghost"
                   size="sm"
                 />
