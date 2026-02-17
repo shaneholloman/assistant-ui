@@ -2622,7 +2622,7 @@ importers:
   packages/react-native:
     dependencies:
       '@assistant-ui/core':
-        specifier: workspace:*
+        specifier: ^0.0.1
         version: link:../core
     devDependencies:
       '@assistant-ui/x-buildutils':
@@ -2731,6 +2731,9 @@ importers:
 
   packages/store:
     dependencies:
+      '@assistant-ui/core':
+        specifier: ^0.0.1
+        version: link:../core
       '@assistant-ui/tap':
         specifier: ^0.4.5
         version: link:../tap
