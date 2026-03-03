@@ -43,5 +43,6 @@
   },
   "bugs": {
     "url": "https://github.com/assistant-ui/assistant-ui/issues"
-  }
+  },
+  "scripts": {}
 }
