@@ -14,6 +14,7 @@ import {
   AssistantMetaTransformStream,
   type ReadonlyJSONValue,
 } from "assistant-stream/utils";
+import { isJSONValueEqual } from "../../../utils/json/is-json-equal";
 
 const isArgsTextComplete = (argsText: string) => {
   try {
@@ -22,6 +23,21 @@ const isArgsTextComplete = (argsText: string) => {
   } catch {
     return false;
   }
+};
+
+const parseArgsText = (argsText: string) => {
+  try {
+    return JSON.parse(argsText);
+  } catch {
+    return undefined;
+  }
+};
+
+const isEquivalentCompleteArgsText = (previous: string, next: string) => {
+  const previousValue = parseArgsText(previous);
+  const nextValue = parseArgsText(next);
+  if (previousValue === undefined || nextValue === undefined) return false;
+  return isJSONValueEqual(previousValue, nextValue);
 };
 
 type UseToolInvocationsParams = {
@@ -69,6 +85,7 @@ export function useToolInvocations({
 
   const acRef = useRef<AbortController>(new AbortController());
   const executingCountRef = useRef(0);
+  const startedExecutionToolCallIdsRef = useRef<Set<string>>(new Set());
   const settledResolversRef = useRef<Array<() => void>>([]);
   const toolCallIdAliasesRef = useRef<Map<string, string>>(new Map());
   const ignoredResultToolCallIdsRef = useRef<Set<string>>(new Set());
@@ -151,6 +168,7 @@ export function useToolInvocations({
           if (ignoredResultToolCallIdsRef.current.has(toolCallId)) {
             return;
           }
+          startedExecutionToolCallIdsRef.current.add(toolCallId);
           const logicalToolCallId = getLogicalToolCallId(toolCallId);
           executingCountRef.current++;
           setToolStatuses((prev) => ({
@@ -159,7 +177,19 @@ export function useToolInvocations({
           }));
         },
         onExecutionEnd: (toolCallId: string) => {
+          const wasStarted =
+            startedExecutionToolCallIdsRef.current.delete(toolCallId);
           if (ignoredResultToolCallIdsRef.current.has(toolCallId)) {
+            if (wasStarted) {
+              executingCountRef.current--;
+              if (executingCountRef.current === 0) {
+                settledResolversRef.current.forEach((resolve) => resolve());
+                settledResolversRef.current = [];
+              }
+            }
+            return;
+          }
+          if (!wasStarted) {
             return;
           }
           const logicalToolCallId = getLogicalToolCallId(toolCallId);
@@ -244,6 +274,64 @@ export function useToolInvocations({
       return setToolState(toolCallId, { ...state, ...patch });
     };
 
+    const hasExecutableTool = (toolName: string) => {
+      const tool = getTools()?.[toolName];
+      return tool?.execute !== undefined || tool?.streamCall !== undefined;
+    };
+
+    const shouldCloseArgsStream = ({
+      toolName,
+      argsText,
+      hasResult,
+    }: {
+      toolName: string;
+      argsText: string;
+      hasResult: boolean;
+    }) => {
+      if (hasResult) return true;
+      if (!hasExecutableTool(toolName)) {
+        // Non-executable tools can emit parseable snapshots mid-stream.
+        // Wait until the run settles before closing the args stream.
+        return !state.isRunning && isArgsTextComplete(argsText);
+      }
+      return isArgsTextComplete(argsText);
+    };
+
+    const restartToolArgsStream = ({
+      toolCallId,
+      toolName,
+      state,
+    }: {
+      toolCallId: string;
+      toolName: string;
+      state: ToolState;
+    }) => {
+      ignoredResultToolCallIdsRef.current.add(state.streamToolCallId);
+      state.controller.argsText.close();
+
+      const streamToolCallId = `${toolCallId}:rewrite:${rewriteCounterRef.current++}`;
+      toolCallIdAliasesRef.current.set(streamToolCallId, toolCallId);
+      const toolCallController = controller.addToolCallPart({
+        toolName,
+        toolCallId: streamToolCallId,
+      });
+
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("started replacement stream tool call", {
+          toolCallId,
+          streamToolCallId,
+        });
+      }
+
+      return setToolState(toolCallId, {
+        ...createToolState({
+          controller: toolCallController,
+          streamToolCallId,
+        }),
+        hasResult: state.hasResult,
+      });
+    };
+
     const processMessages = (
       messages: readonly (typeof state.messages)[number][],
     ) => {
@@ -276,32 +364,86 @@ export function useToolInvocations({
               }
 
               if (content.argsText !== lastState.argsText) {
+                let shouldWriteArgsText = true;
+
                 if (lastState.argsComplete) {
-                  if (process.env.NODE_ENV !== "production") {
-                    console.warn(
-                      "argsText updated after controller was closed:",
-                      {
-                        previous: lastState.argsText,
-                        next: content.argsText,
-                      },
-                    );
+                  if (
+                    isEquivalentCompleteArgsText(
+                      lastState.argsText,
+                      content.argsText,
+                    )
+                  ) {
+                    lastState = patchToolState(content.toolCallId, lastState, {
+                      argsText: content.argsText,
+                    });
+                    shouldWriteArgsText = false;
                   }
-                } else {
-                  if (!content.argsText.startsWith(lastState.argsText)) {
-                    // Check if this is key reordering (both are complete JSON)
-                    // This happens when transitioning from streaming to complete state
-                    // and the provider returns keys in a different order
-                    if (
-                      isArgsTextComplete(lastState.argsText) &&
-                      isArgsTextComplete(content.argsText)
-                    ) {
-                      lastState.controller.argsText.close();
-                      patchToolState(content.toolCallId, lastState, {
-                        argsText: content.argsText,
-                        argsComplete: true,
-                      });
-                      return; // Continue to next content part
+
+                  if (shouldWriteArgsText) {
+                    const canRestartClosedArgsStream =
+                      !lastState.hasResult &&
+                      !startedExecutionToolCallIdsRef.current.has(
+                        lastState.streamToolCallId,
+                      );
+
+                    if (process.env.NODE_ENV !== "production") {
+                      console.warn(
+                        canRestartClosedArgsStream
+                          ? "argsText updated after controller was closed, restarting tool args stream:"
+                          : "argsText updated after controller was closed:",
+                        {
+                          previous: lastState.argsText,
+                          next: content.argsText,
+                        },
+                      );
                     }
+
+                    if (!canRestartClosedArgsStream) {
+                      lastState = patchToolState(
+                        content.toolCallId,
+                        lastState,
+                        {
+                          argsText: content.argsText,
+                        },
+                      );
+                      shouldWriteArgsText = false;
+                    }
+                  }
+
+                  if (shouldWriteArgsText) {
+                    lastState = restartToolArgsStream({
+                      toolCallId: content.toolCallId,
+                      toolName: content.toolName,
+                      state: lastState,
+                    });
+                  }
+                } else if (!content.argsText.startsWith(lastState.argsText)) {
+                  // Check if this is key reordering (both are complete JSON)
+                  // This happens when transitioning from streaming to complete state
+                  // and the provider returns keys in a different order
+                  if (
+                    isArgsTextComplete(lastState.argsText) &&
+                    isArgsTextComplete(content.argsText) &&
+                    isEquivalentCompleteArgsText(
+                      lastState.argsText,
+                      content.argsText,
+                    )
+                  ) {
+                    const shouldClose = shouldCloseArgsStream({
+                      toolName: content.toolName,
+                      argsText: content.argsText,
+                      hasResult: content.result !== undefined,
+                    });
+                    if (shouldClose) {
+                      lastState.controller.argsText.close();
+                    }
+                    lastState = patchToolState(content.toolCallId, lastState, {
+                      argsText: content.argsText,
+                      argsComplete: shouldClose,
+                    });
+                    shouldWriteArgsText = false;
+                  }
+                  if (shouldWriteArgsText) {
                     if (process.env.NODE_ENV !== "production") {
                       console.warn(
                         "argsText rewrote previous snapshot, restarting tool args stream:",
@@ -312,49 +454,47 @@ export function useToolInvocations({
                         },
                       );
                     }
-
-                    ignoredResultToolCallIdsRef.current.add(
-                      lastState.streamToolCallId,
-                    );
-                    lastState.controller.argsText.close();
-
-                    const streamToolCallId = `${content.toolCallId}:rewrite:${rewriteCounterRef.current++}`;
-                    toolCallIdAliasesRef.current.set(
-                      streamToolCallId,
-                      content.toolCallId,
-                    );
-                    const toolCallController = controller.addToolCallPart({
+                    lastState = restartToolArgsStream({
+                      toolCallId: content.toolCallId,
                       toolName: content.toolName,
-                      toolCallId: streamToolCallId,
-                    });
-                    if (process.env.NODE_ENV !== "production") {
-                      console.warn("started replacement stream tool call", {
-                        toolCallId: content.toolCallId,
-                        streamToolCallId,
-                      });
-                    }
-                    lastState = setToolState(content.toolCallId, {
-                      ...createToolState({
-                        controller: toolCallController,
-                        streamToolCallId,
-                      }),
-                      hasResult: lastState.hasResult,
+                      state: lastState,
                     });
                   }
+                }
 
+                if (shouldWriteArgsText) {
                   const argsTextDelta = content.argsText.slice(
                     lastState.argsText.length,
                   );
                   lastState.controller.argsText.append(argsTextDelta);
 
-                  const shouldClose = isArgsTextComplete(content.argsText);
+                  const shouldClose = shouldCloseArgsStream({
+                    toolName: content.toolName,
+                    argsText: content.argsText,
+                    hasResult: content.result !== undefined,
+                  });
                   if (shouldClose) {
                     lastState.controller.argsText.close();
                   }
 
-                  patchToolState(content.toolCallId, lastState, {
+                  lastState = patchToolState(content.toolCallId, lastState, {
                     argsText: content.argsText,
                     argsComplete: shouldClose,
+                  });
+                }
+              }
+
+              if (!lastState.argsComplete) {
+                const shouldClose = shouldCloseArgsStream({
+                  toolName: content.toolName,
+                  argsText: content.argsText,
+                  hasResult: content.result !== undefined,
+                });
+                if (shouldClose) {
+                  lastState.controller.argsText.close();
+                  lastState = patchToolState(content.toolCallId, lastState, {
+                    argsText: content.argsText,
+                    argsComplete: true,
                   });
                 }
               }
@@ -390,7 +530,7 @@ export function useToolInvocations({
     if (isInitialState.current) {
       isInitialState.current = false;
     }
-  }, [state, controller]);
+  }, [state, controller, getTools]);
 
   const abort = (): Promise<void> => {
     humanInputRef.current.forEach(({ reject }) => {
@@ -414,6 +554,7 @@ export function useToolInvocations({
     reset: () => {
       isInitialState.current = true;
       void abort().finally(() => {
+        startedExecutionToolCallIdsRef.current.clear();
         toolCallIdAliasesRef.current.clear();
         ignoredResultToolCallIdsRef.current.clear();
         rewriteCounterRef.current = 0;
