@@ -551,13 +551,32 @@ export const create = new Command()
       logger.success("Project created successfully!");
       logger.break();
       const runCmd = pm === "npm" ? "npm run" : pm;
+      let devScript = "dev";
+      let envFile = ".env.local";
+      try {
+        const scaffoldedPkg = JSON.parse(
+          fs.readFileSync(
+            path.join(absoluteProjectDir, "package.json"),
+            "utf-8",
+          ),
+        );
+        devScript = scaffoldedPkg.scripts?.dev
+          ? "dev"
+          : scaffoldedPkg.scripts?.start
+            ? "start"
+            : "dev";
+        envFile = scaffoldedPkg.dependencies?.next ? ".env.local" : ".env";
+      } catch {
+        // Fall back to defaults if package.json cannot be read
+      }
+
       logger.info("Next steps:");
       logger.info(`  cd ${resolvedProjectDirectory}`);
       if (opts.skipInstall) {
         logger.info(`  ${pm} install`);
       }
-      logger.info("  # Set up your environment variables in .env.local");
-      logger.info(`  ${runCmd} dev`);
+      logger.info(`  # Set up your environment variables in ${envFile}`);
+      logger.info(`  ${runCmd} ${devScript}`);
     } catch (error) {
       if (error instanceof SpawnExitError) {
         logger.error(`Project creation failed with code ${error.code}`);
