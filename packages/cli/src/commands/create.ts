@@ -139,6 +139,14 @@ export const PROJECT_METADATA: ProjectMetadata[] = [
     hasLocalComponents: false,
   },
   {
+    name: "with-expo",
+    label: "Expo",
+    description: "Expo / React Native",
+    category: "example",
+    path: "examples/with-expo",
+    hasLocalComponents: true,
+  },
+  {
     name: "with-external-store",
     label: "External Store",
     description: "Custom message store",
@@ -195,6 +203,15 @@ export const PROJECT_METADATA: ProjectMetadata[] = [
     hasLocalComponents: false,
   },
 ];
+
+// Examples that exist in the monorepo but are intentionally excluded from the CLI:
+//
+// - waterfall: Still in development, not ready for production.
+// - with-cloud-standalone: For cloud without assistant-ui — not for the
+//     assistant-ui CLI.
+// - with-store: In development, not ready for public use of the tap store.
+// - with-tap-runtime: In development, not ready for public use of the tap
+//     store.
 
 const templateNames = PROJECT_METADATA.filter(
   (m) => m.category === "template",
