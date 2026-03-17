@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectMentionTrigger } from "./ComposerMentionContext";
+import { detectMentionTrigger } from "./detectMentionTrigger";
 
 describe("detectMentionTrigger", () => {
   it("detects @query at cursor position", () => {
@@ -35,6 +35,17 @@ describe("detectMentionTrigger", () => {
 
   it("stops at newline", () => {
     expect(detectMentionTrigger("@foo\nbar", "@", 8)).toBeNull();
+  });
+
+  it("stops at tab", () => {
+    expect(detectMentionTrigger("@foo\tbar", "@", 8)).toBeNull();
+  });
+
+  it("treats tab before trigger as valid boundary", () => {
+    expect(detectMentionTrigger("hello\t@foo", "@", 10)).toEqual({
+      query: "foo",
+      offset: 6,
+    });
   });
 
   it("finds trigger closest to cursor, not earlier ones", () => {
