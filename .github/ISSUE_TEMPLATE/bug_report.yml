@@ -1,0 +1,105 @@
+name: Bug report
+description: Report an issue to help us improve assistant-ui
+labels: ["bug"]
+
+body:
+  - type: checkboxes
+    attributes:
+      label: Checklist
+      description: Please confirm before submitting.
+      options:
+        - label: I have searched existing issues and this is not a duplicate
+          required: true
+        - label: This is a reproducible bug, not a usage question (use [Discord](https://discord.gg/S9dwgCNEFs) for questions)
+          required: true
+
+  - type: input
+    attributes:
+      label: Package version(s)
+      description: Run `npm ls @assistant-ui/react` or check your package.json.
+      placeholder: "e.g. @assistant-ui/react@0.10.x, assistant-stream@0.2.x"
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Affected area(s)
+      multiple: true
+      options:
+        - Runtime / Core
+        - Thread Management
+        - Streaming (assistant-stream)
+        - Attachments / Files
+        - Cloud (assistant-cloud)
+        - React / UI Components
+        - React Native
+        - Store / Tap
+        - Content Rendering (Markdown, Syntax Highlighting)
+        - Rich Text / Composer (Lexical)
+        - Provider Adapters
+        - Performance
+        - CLI / Scaffolding
+        - DevTools / Observability
+        - Documentation
+        - Unsure
+
+  - type: dropdown
+    attributes:
+      label: Runtime adapter in use
+      description: Which runtime hook are you using?
+      options:
+        - useLocalRuntime
+        - useExternalStoreRuntime
+        - useCloudRuntime
+        - useAISDKRuntime / useChatRuntime
+        - useLangGraphRuntime
+        - useAgUiRuntime
+        - useA2ARuntime
+        - useAdkRuntime (Google ADK)
+        - useDataStreamRuntime
+        - useAssistantTransportRuntime
+        - Other / Custom
+        - Not applicable
+        - Unsure
+
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps or a link to a reproduction repo.
+      placeholder: |
+        1. Set up runtime with `useXxxRuntime(...)`
+        2. Send a message with ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Expected vs actual behavior
+      placeholder: |
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: System information
+      description: Please provide relevant environment details.
+      value: |
+        - OS:
+        - Browser:
+        - Node.js:
+        - Package manager:
+        - Framework (Next.js / Vite / Expo / etc.):
+
+  - type: textarea
+    attributes:
+      label: Code snippet or error log
+      render: tsx
+      description: Relevant code, stack traces, or console output. Please remove any secrets.
+
+  - type: textarea
+    attributes:
+      label: Additional context
+      description: Screenshots, related issues, or anything else that might help.
