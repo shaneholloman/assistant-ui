@@ -39,7 +39,7 @@ export class RemoteThreadListThreadListRuntimeCore
 
   private _mainThreadId!: string;
   private readonly _state = new OptimisticState<RemoteThreadState>({
-    isLoading: false,
+    isLoading: true,
     newThreadId: undefined,
     threadIds: [],
     archivedThreadIds: [],
@@ -103,6 +103,7 @@ export class RemoteThreadListThreadListRuntimeCore
 
             return {
               ...state,
+              isLoading: false,
               threadIds: newThreadIds,
               archivedThreadIds: newArchivedThreadIds,
               threadIdMap: {
@@ -115,6 +116,13 @@ export class RemoteThreadListThreadListRuntimeCore
               },
             };
           },
+        })
+        .catch(() => {
+          this._loadThreadsPromise = undefined;
+          this._state.update({
+            ...this._state.baseValue,
+            isLoading: false,
+          });
         })
         .then(() => {});
     }
