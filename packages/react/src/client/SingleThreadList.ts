@@ -5,6 +5,7 @@ import {
   tapClientResource,
 } from "@assistant-ui/store";
 
+const RESOLVED_PROMISE = Promise.resolve();
 const THREAD_ID = "default";
 
 const SingleThreadListItem = resource((): ClientOutput<"threadListItem"> => {
@@ -62,6 +63,7 @@ export const SingleThreadList = resource(
       switchToNewThread: () => {
         throw new Error("SingleThreadList does not support switchToNewThread");
       },
+      getLoadThreadsPromise: () => RESOLVED_PROMISE,
       item: (selector) => {
         if (
           selector !== "main" &&

@@ -12,6 +12,8 @@ import type { ResourceElement } from "@assistant-ui/tap";
 import { ModelContext, Suggestions } from "@assistant-ui/core/store";
 import { Tools, DataRenderers } from "@assistant-ui/core/react";
 
+const RESOLVED_PROMISE = Promise.resolve();
+
 export type InMemoryThreadListProps = {
   thread: (threadId: string) => ResourceElement<ClientOutput<"thread">>;
   onSwitchToThread?: (threadId: string) => void;
@@ -151,6 +153,7 @@ export const InMemoryThreadList = resource(
       getState: () => state,
       switchToThread: handleSwitchToThread,
       switchToNewThread: handleSwitchToNewThread,
+      getLoadThreadsPromise: () => RESOLVED_PROMISE,
       item: (selector) => {
         if (selector === "main") {
           const index = threads.findIndex((t) => t.id === mainThreadId);
