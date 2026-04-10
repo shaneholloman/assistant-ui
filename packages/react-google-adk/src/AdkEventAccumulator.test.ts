@@ -399,7 +399,7 @@ describe("AdkEventAccumulator - isFinalResponse logic", () => {
     });
   });
 
-  it("marks as final when longRunningToolIds is non-empty", () => {
+  it("HITL event leaves status undefined for auto-status", () => {
     const acc = new AdkEventAccumulator();
     const msgs = acc.processEvent(
       makeEvent({
@@ -413,9 +413,282 @@ describe("AdkEventAccumulator - isFinalResponse logic", () => {
         },
       }),
     );
+    expect((msgs[0] as AdkMessage & { type: "ai" }).status).toBeUndefined();
+  });
+});
+
+describe("AdkEventAccumulator - HITL requires-action", () => {
+  const makeHitlEvent = (
+    toolCallId: string,
+    overrides: Partial<AdkEvent> = {},
+  ): AdkEvent =>
+    makeEvent({
+      author: "agent",
+      longRunningToolIds: [toolCallId],
+      content: {
+        parts: [
+          {
+            functionCall: {
+              id: toolCallId,
+              name: "adk_request_input",
+              args: { message: "What's the forecast period?" },
+            },
+          },
+        ],
+      },
+      ...overrides,
+    });
+
+  it("produces an AI message with tool call and no manual status", () => {
+    const acc = new AdkEventAccumulator();
+    const msgs = acc.processEvent(makeHitlEvent("tc-1"));
+
+    expect(msgs).toHaveLength(1);
+    const aiMsg = msgs[0] as AdkMessage & { type: "ai" };
+    expect(aiMsg.type).toBe("ai");
+    expect(aiMsg.tool_calls).toHaveLength(1);
+    expect(aiMsg.tool_calls![0]!.id).toBe("tc-1");
+    expect(aiMsg.tool_calls![0]!.name).toBe("adk_request_input");
+    expect(aiMsg.status).toBeUndefined();
+  });
+
+  it("matches tool call id to the longRunningToolIds entry", () => {
+    const acc = new AdkEventAccumulator();
+    const msgs = acc.processEvent(makeHitlEvent("tc-1"));
+    const aiMsg = msgs[0] as AdkMessage & { type: "ai" };
+    expect(aiMsg.tool_calls![0]!.id).toBe("tc-1");
+  });
+
+  it("stays pending across a subsequent bookkeeping event", () => {
+    const acc = new AdkEventAccumulator();
+    acc.processEvent(makeHitlEvent("tc-1", { author: "WorkflowA" }));
+
+    const msgs = acc.processEvent(
+      makeEvent({
+        id: "evt-bookkeeping",
+        author: "WorkflowA",
+        actions: { stateDelta: { waiting_for_user: true } },
+      }),
+    );
+
+    const aiMsg = msgs.find(
+      (m): m is AdkMessage & { type: "ai" } =>
+        m.type === "ai" && (m.tool_calls?.length ?? 0) > 0,
+    );
+    expect(aiMsg).toBeDefined();
+    expect(aiMsg!.tool_calls![0]!.id).toBe("tc-1");
+    expect(aiMsg!.status).toBeUndefined();
+  });
+
+  it("assigns manual complete status on non-HITL final event", () => {
+    const acc = new AdkEventAccumulator();
+    const msgs = acc.processEvent(
+      makeEvent({
+        author: "agent",
+        content: { role: "model", parts: [{ text: "Done." }] },
+      }),
+    );
+
     expect(msgs[0]).toMatchObject({
       status: { type: "complete", reason: "stop" },
     });
+  });
+
+  it("assigns manual complete status on skipSummarization final event", () => {
+    const acc = new AdkEventAccumulator();
+    const msgs = acc.processEvent(
+      makeEvent({
+        author: "agent",
+        actions: { skipSummarization: true },
+        content: { role: "model", parts: [{ text: "skipped" }] },
+      }),
+    );
+
+    expect(msgs[0]).toMatchObject({
+      status: { type: "complete", reason: "stop" },
+    });
+  });
+
+  it("prioritizes skipSummarization over longRunningToolIds", () => {
+    const acc = new AdkEventAccumulator();
+    const msgs = acc.processEvent(
+      makeEvent({
+        author: "agent",
+        longRunningToolIds: ["lrt-both"],
+        actions: { skipSummarization: true },
+        content: {
+          role: "model",
+          parts: [
+            { functionCall: { name: "slow_tool", id: "lrt-both", args: {} } },
+          ],
+        },
+      }),
+    );
+
+    expect(msgs[0]).toMatchObject({
+      status: { type: "complete", reason: "stop" },
+    });
+  });
+
+  it("ignores empty longRunningToolIds array for HITL guard", () => {
+    const acc = new AdkEventAccumulator();
+    const msgs = acc.processEvent(
+      makeEvent({
+        author: "agent",
+        longRunningToolIds: [],
+        content: { role: "model", parts: [{ text: "Done." }] },
+      }),
+    );
+
+    expect(msgs[0]).toMatchObject({
+      status: { type: "complete", reason: "stop" },
+    });
+  });
+
+  it("preserves text and skips status when partial text precedes HITL event", () => {
+    const acc = new AdkEventAccumulator();
+    acc.processEvent(
+      makeEvent({
+        author: "ClarifyAgent",
+        partial: true,
+        content: {
+          role: "model",
+          parts: [{ text: "Let me ask about " }],
+        },
+      }),
+    );
+
+    const msgs = acc.processEvent(
+      makeHitlEvent("tc-1", { author: "ClarifyAgent" }),
+    );
+
+    const aiMsg = msgs.find(
+      (m): m is AdkMessage & { type: "ai" } =>
+        m.type === "ai" && (m.tool_calls?.length ?? 0) > 0,
+    );
+    expect(aiMsg).toBeDefined();
+    expect(aiMsg!.tool_calls).toHaveLength(1);
+    expect(
+      aiMsg!.content.some(
+        (c) => c.type === "text" && c.text.includes("Let me ask"),
+      ),
+    ).toBe(true);
+    expect(aiMsg!.status).toBeUndefined();
+  });
+
+  it("keeps status undefined for mixed text and functionCall content", () => {
+    const acc = new AdkEventAccumulator();
+    const msgs = acc.processEvent(
+      makeEvent({
+        author: "agent",
+        longRunningToolIds: ["mixed-tc-1"],
+        content: {
+          role: "model",
+          parts: [
+            { text: "I need some clarification." },
+            {
+              functionCall: {
+                id: "mixed-tc-1",
+                name: "adk_request_input",
+                args: { message: "Which region?" },
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    const aiMsg = msgs[0] as AdkMessage & { type: "ai" };
+    expect(aiMsg.content.some((c) => c.type === "text")).toBe(true);
+    expect(aiMsg.tool_calls).toHaveLength(1);
+    expect(aiMsg.tool_calls![0]!.id).toBe("mixed-tc-1");
+    expect(aiMsg.status).toBeUndefined();
+  });
+
+  it("handles multiple tool calls with partial longRunningToolIds overlap", () => {
+    const acc = new AdkEventAccumulator();
+    const msgs = acc.processEvent(
+      makeEvent({
+        author: "agent",
+        longRunningToolIds: ["tc-hitl"],
+        content: {
+          role: "model",
+          parts: [
+            {
+              functionCall: {
+                id: "tc-hitl",
+                name: "adk_request_input",
+                args: { message: "Confirm?" },
+              },
+            },
+            {
+              functionCall: {
+                id: "tc-regular",
+                name: "fetch_data",
+                args: { url: "https://example.com" },
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    const aiMsg = msgs[0] as AdkMessage & { type: "ai" };
+    expect(aiMsg.tool_calls).toHaveLength(2);
+    expect(aiMsg.tool_calls!.map((tc) => tc.id).sort()).toEqual(
+      ["tc-hitl", "tc-regular"].sort(),
+    );
+    expect(aiMsg.status).toBeUndefined();
+  });
+
+  it("does not override HITL guard with explicit finishReason", () => {
+    const acc = new AdkEventAccumulator();
+    const msgs = acc.processEvent(
+      makeHitlEvent("tc-fr", { finishReason: "STOP" }),
+    );
+
+    const aiMsg = msgs[0] as AdkMessage & { type: "ai" };
+    expect(aiMsg.status).toBeUndefined();
+  });
+
+  it("produces separate messages without status for sequential HITL events", () => {
+    const acc = new AdkEventAccumulator();
+    acc.processEvent(
+      makeHitlEvent("tc-seq-1", { id: "evt-1", author: "WorkflowA" }),
+    );
+
+    const msgs = acc.processEvent(
+      makeEvent({
+        id: "evt-2",
+        author: "WorkflowB",
+        longRunningToolIds: ["tc-seq-2"],
+        content: {
+          role: "model",
+          parts: [
+            {
+              functionCall: {
+                id: "tc-seq-2",
+                name: "adk_request_confirmation",
+                args: {
+                  originalFunctionCall: { name: "delete_all", args: {} },
+                  toolConfirmation: { hint: "Sure?", payload: {} },
+                },
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    const hitlMsgs = msgs.filter(
+      (m): m is AdkMessage & { type: "ai" } =>
+        m.type === "ai" && (m.tool_calls?.length ?? 0) > 0,
+    );
+    expect(hitlMsgs).toHaveLength(2);
+    expect(hitlMsgs[0]!.status).toBeUndefined();
+    expect(hitlMsgs[1]!.status).toBeUndefined();
+    expect(hitlMsgs[0]!.tool_calls![0]!.id).toBe("tc-seq-1");
+    expect(hitlMsgs[1]!.tool_calls![0]!.id).toBe("tc-seq-2");
   });
 });
 

@@ -341,7 +341,13 @@ export class AdkEventAccumulator {
     // Check isFinalResponse (can be true even for partial events via skipSummarization/longRunningToolIds)
     if (isFinalResponse(event) && this.currentMessageId) {
       const msg = this.messagesMap.get(this.currentMessageId);
-      if (msg && msg.type === "ai" && !msg.status) {
+      // Skip manual "complete" when longRunningToolIds is the sole reason for
+      // isFinalResponse — let auto-status apply requires-action for pending tool calls.
+      const isHitlOnly =
+        event.longRunningToolIds &&
+        event.longRunningToolIds.length > 0 &&
+        !event.actions?.skipSummarization;
+      if (msg && msg.type === "ai" && !msg.status && !isHitlOnly) {
         const status = finishReasonToStatus(event.finishReason);
         const updated: InProgressMessage = {
           ...msg,
