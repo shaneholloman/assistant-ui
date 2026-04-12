@@ -1,6 +1,15 @@
 "use client";
 
+import type { InputContent } from "@ag-ui/client";
 import { type Tool, toToolsJSONSchema } from "assistant-stream";
+
+export type { InputContent };
+
+type AttachmentLike = {
+  name?: string | undefined;
+  contentType?: string | undefined;
+  content?: readonly unknown[] | undefined;
+};
 
 type ThreadMessageLike = {
   id: string;
@@ -9,6 +18,7 @@ type ThreadMessageLike = {
   name?: string;
   toolCallId?: string;
   error?: string;
+  attachments?: readonly AttachmentLike[];
 };
 
 type AgUiToolCall = {
@@ -21,7 +31,7 @@ export type AgUiMessage =
   | {
       id: string;
       role: string;
-      content: string;
+      content: string | InputContent[];
       name?: string;
       toolCalls?: AgUiToolCall[];
     }
@@ -102,6 +112,131 @@ function extractText(content: unknown): string {
     .filter(
       (part): part is { type: "text"; text: string } =>
         part?.type === "text" && typeof part?.text === "string",
+    )
+    .map((part) => part.text)
+    .join("\n");
+}
+
+function parseDataUrl(
+  value: string,
+): { mimeType: string; data: string } | null {
+  const match = value.match(/^data:([^;,]+)(?:;[^;,]+)*;base64,(.+)$/);
+  if (!match) return null;
+  return { mimeType: match[1]!, data: match[2]! };
+}
+
+const httpUrlPattern = /^https?:\/\//i;
+
+function toInputContent(
+  part: unknown,
+  fallbackMimeType: string | undefined,
+): InputContent | null {
+  if (!isObject(part)) return null;
+  const type = getString(part, "type");
+
+  if (type === "text") {
+    const text = getString(part, "text");
+    if (text === undefined) return null;
+    return { type: "text", text };
+  }
+
+  if (type === "image") {
+    const image = getString(part, "image");
+    if (image === undefined) return null;
+    const parsed = parseDataUrl(image);
+    if (parsed) {
+      return {
+        type: "image",
+        source: {
+          type: "data",
+          value: parsed.data,
+          mimeType: parsed.mimeType,
+        },
+      };
+    }
+    return {
+      type: "image",
+      source: {
+        type: "url",
+        value: image,
+        ...(fallbackMimeType !== undefined
+          ? { mimeType: fallbackMimeType }
+          : {}),
+      },
+    };
+  }
+
+  if (type === "file") {
+    const data = getString(part, "data");
+    if (data === undefined) return null;
+    const partMimeType = getString(part, "mimeType");
+    const filename = getString(part, "filename");
+    const mimeType =
+      partMimeType || fallbackMimeType || "application/octet-stream";
+
+    if (httpUrlPattern.test(data)) {
+      return {
+        type: "binary",
+        mimeType,
+        url: data,
+        ...(filename !== undefined ? { filename } : {}),
+      };
+    }
+    const parsed = parseDataUrl(data);
+    return {
+      type: "binary",
+      mimeType: parsed?.mimeType ?? mimeType,
+      data: parsed?.data ?? data,
+      ...(filename !== undefined ? { filename } : {}),
+    };
+  }
+
+  return null;
+}
+
+function buildUserContent(message: ThreadMessageLike): string | InputContent[] {
+  // File parts in message.content are intentionally skipped: the canonical
+  // binary payload for files always flows through message.attachments.
+  const contentParts = Array.isArray(message.content)
+    ? message.content.filter(
+        (part) => !(isObject(part) && part["type"] === "file"),
+      )
+    : [];
+
+  const attachments = message.attachments ?? [];
+
+  const converted: InputContent[] = [];
+
+  // Promote string-form content to a leading text part so it survives when
+  // non-text attachments are present (fromAgUiMessages emits string content).
+  if (typeof message.content === "string" && message.content.length > 0) {
+    converted.push({ type: "text", text: message.content });
+  }
+
+  for (const part of contentParts) {
+    const input = toInputContent(part, undefined);
+    if (input) converted.push(input);
+  }
+  for (const attachment of attachments) {
+    if (!isObject(attachment)) continue;
+    const attachmentContent = attachment["content"];
+    if (!Array.isArray(attachmentContent)) continue;
+    const fallbackMime = getString(attachment, "contentType");
+    for (const part of attachmentContent) {
+      const input = toInputContent(part, fallbackMime);
+      if (input) converted.push(input);
+    }
+  }
+
+  const hasNonText = converted.some((part) => part.type !== "text");
+  if (hasNonText) return converted;
+
+  // All-text path: collapse to plain string. Join text parts collected from
+  // both content and attachments so attachment-sourced text is not dropped.
+  if (converted.length === 0) return extractText(message.content);
+  return converted
+    .filter(
+      (part): part is { type: "text"; text: string } => part.type === "text",
     )
     .map((part) => part.text)
     .join("\n");
@@ -415,7 +550,10 @@ export function toAgUiMessages(
     const genericMessage: AgUiMessage = {
       id: message.id,
       role: message.role,
-      content: extractText(message.content),
+      content:
+        message.role === "user"
+          ? buildUserContent(message)
+          : extractText(message.content),
     };
     if (message.name) {
       genericMessage.name = message.name;
