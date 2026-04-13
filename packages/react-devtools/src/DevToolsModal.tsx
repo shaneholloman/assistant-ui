@@ -115,6 +115,8 @@ const DevToolsModalImpl = () => {
 
       {isOpen && (
         <>
+          {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click is a convenience; keyboard users use the close button */}
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay */}
           <div style={styles.backdrop} onClick={() => setIsOpen(false)} />
 
           <div style={styles.modal} data-devtools-modal>
@@ -176,7 +178,7 @@ export const DevToolsModal = () => {
   // This allows the entire component to be eliminated via dead code elimination
   if (
     typeof process !== "undefined" &&
-    process.env?.["NODE_ENV"] === "production"
+    process.env?.NODE_ENV === "production"
   ) {
     return null;
   }
