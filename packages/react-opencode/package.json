@@ -28,7 +28,6 @@
   "type": "module",
   "exports": {
     ".": {
-      "aui-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
@@ -47,7 +46,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.2.27"
+    "@opencode-ai/sdk": "^1.4.3"
   },
   "peerDependencies": {
     "@assistant-ui/react": "^0.12.17",
@@ -62,9 +61,9 @@
   "devDependencies": {
     "@assistant-ui/react": "workspace:*",
     "@assistant-ui/x-buildutils": "workspace:*",
-    "@types/node": "^25.3.3",
+    "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
-    "react": "^19.2.4",
-    "vitest": "^4.0.18"
+    "react": "^19.2.5",
+    "vitest": "^4.1.4"
   }
 }
