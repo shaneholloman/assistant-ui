@@ -998,6 +998,7 @@ export function DevToolsUI() {
   const eventTypes = useMemo(() => {
     const types = new Set<string>();
     apis.forEach((api) => {
+      // biome-ignore lint/suspicious/useIterableCallbackReturn: forEach callback intentionally has no return
       api.logs.forEach((log) => types.add(log.event));
     });
     return Array.from(types).sort();
@@ -1152,6 +1153,7 @@ export function DevToolsUI() {
               className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm transition-colors dark:border-zinc-800 dark:bg-zinc-900"
             >
               <button
+                type="button"
                 onClick={() => toggleStateSection(key)}
                 className="flex w-full items-center justify-between bg-zinc-50 px-4 py-3 text-left font-semibold text-sm text-zinc-800 transition-colors hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
               >
@@ -1358,6 +1360,7 @@ export function DevToolsUI() {
           <div className="flex h-full items-center gap-1">
             {["state", "modelContext", "events"].map((tab) => (
               <button
+                type="button"
                 key={tab}
                 onClick={() => setActiveTab(tab as TabType)}
                 className={clsx(

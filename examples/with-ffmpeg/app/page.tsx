@@ -289,6 +289,7 @@ const FfmpegTool: FC<{ file: File }> = ({ file }) => {
       return (
         <div className="mb-2 flex flex-col gap-3 rounded-lg border px-5 py-4">
           {blobUrl && isImage && (
+            // biome-ignore lint/performance/noImgElement: blob URL display
             <img
               src={blobUrl}
               alt={fileName}
@@ -308,6 +309,7 @@ const FfmpegTool: FC<{ file: File }> = ({ file }) => {
             </div>
           )}
           <button
+            type="button"
             onClick={handleDownload}
             className="flex w-fit items-center gap-2 rounded-md border bg-background px-4 py-2 text-sm hover:bg-accent"
           >
