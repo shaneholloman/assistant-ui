@@ -56,11 +56,12 @@ import {
   SquareIcon,
   WrenchIcon,
 } from "lucide-react";
-import { LexicalComposerInput } from "@assistant-ui/react-lexical";
-import { useAui } from "@assistant-ui/store";
-import type { Unstable_SlashCommandItem } from "@assistant-ui/core";
+import {
+  LexicalComposerInput,
+  type MentionChipProps,
+} from "@assistant-ui/react-lexical";
 import Image from "next/image";
-import { useCallback, useState, type FC } from "react";
+import { useState, type FC } from "react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { ModelSelector } from "@/components/assistant-ui/model-selector";
 import { docsModelOptions } from "@/components/docs/assistant/docs-model-options";
@@ -292,26 +293,35 @@ const slashCommandIcons: Record<string, FC<{ className?: string }>> = {
   HelpCircle: HelpCircleIcon,
 };
 
-const Composer: FC = () => {
-  const aui = useAui();
+function MentionChip({
+  mentionId,
+  mentionType,
+  label,
+  icon,
+}: MentionChipProps) {
+  const Icon =
+    mentionType !== "command" && icon ? slashCommandIcons[icon] : undefined;
+  return (
+    <span
+      className="aui-mention-chip"
+      data-mention-type={mentionType}
+      data-mention-id={mentionId}
+    >
+      {Icon && (
+        <span className="aui-mention-chip-icon">
+          <Icon className="size-3" />
+        </span>
+      )}
+      <span className="aui-mention-chip-label">{label}</span>
+    </span>
+  );
+}
 
+const Composer: FC = () => {
   const mentionAdapter = unstable_useToolMentionAdapter();
   const slashAdapter = unstable_useSlashCommandAdapter({
     commands: slashCommands,
   });
-
-  const handleSlashCommand = useCallback(
-    (item: Unstable_SlashCommandItem) => {
-      if (item.execute) {
-        item.execute();
-        return;
-      }
-      const prompt = item.description ?? item.id;
-      aui.composer().setText(prompt);
-      aui.composer().send();
-    },
-    [aui],
-  );
 
   return (
     <ComposerPrimitive.Unstable_TriggerPopoverRoot>
@@ -324,8 +334,9 @@ const Composer: FC = () => {
             <ComposerQuotePreview />
             <ComposerAttachments />
             <LexicalComposerInput
+              mentionChip={MentionChip}
               placeholder="Send a message... (@ to mention, / for commands)"
-              className="aui-composer-input relative max-h-32 min-h-10 w-full resize-none bg-transparent px-1.75 py-1 text-sm outline-none [&_.aui-lexical-input]:min-h-[1lh] [&_.aui-lexical-input]:outline-none [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:absolute [&_.aui-lexical-placeholder]:top-0 [&_.aui-lexical-placeholder]:left-0 [&_.aui-lexical-placeholder]:px-1.75 [&_.aui-lexical-placeholder]:py-1 [&_.aui-lexical-placeholder]:text-muted-foreground/80 [&_.aui-mention-chip]:mx-0.5 [&_.aui-mention-chip]:inline-flex [&_.aui-mention-chip]:translate-y-[-1px] [&_.aui-mention-chip]:items-center [&_.aui-mention-chip]:gap-1 [&_.aui-mention-chip]:rounded-full [&_.aui-mention-chip]:border [&_.aui-mention-chip]:border-primary/20 [&_.aui-mention-chip]:bg-primary/5 [&_.aui-mention-chip]:px-2 [&_.aui-mention-chip]:py-0.5 [&_.aui-mention-chip]:font-medium [&_.aui-mention-chip]:text-[13px] [&_.aui-mention-chip]:text-primary [&_.aui-mention-chip]:leading-none"
+              className="aui-composer-input relative max-h-32 min-h-10 w-full resize-none bg-transparent px-1.75 py-1 text-sm outline-none [&_.aui-lexical-input]:min-h-[1lh] [&_.aui-lexical-input]:outline-none [&_.aui-lexical-placeholder]:pointer-events-none [&_.aui-lexical-placeholder]:absolute [&_.aui-lexical-placeholder]:top-0 [&_.aui-lexical-placeholder]:left-0 [&_.aui-lexical-placeholder]:px-1.75 [&_.aui-lexical-placeholder]:py-1 [&_.aui-lexical-placeholder]:text-muted-foreground/80 [&_.aui-mention-chip-icon]:self-center [&_.aui-mention-chip]:inline-flex [&_.aui-mention-chip]:items-baseline [&_.aui-mention-chip]:gap-1 [&_.aui-mention-chip]:rounded-md [&_.aui-mention-chip]:bg-blue-100 [&_.aui-mention-chip]:px-1.5 [&_.aui-mention-chip]:py-0.5 [&_.aui-mention-chip]:font-medium [&_.aui-mention-chip]:text-[13px] [&_.aui-mention-chip]:text-blue-700 [&_.aui-mention-chip]:leading-none dark:[&_.aui-mention-chip]:bg-blue-900/50 dark:[&_.aui-mention-chip]:text-blue-300"
             />
             <ComposerAction />
           </div>
@@ -346,7 +357,10 @@ const Composer: FC = () => {
           triggerId="slash"
           char="/"
           adapter={slashAdapter}
-          onSelect={{ type: "action", handler: handleSlashCommand }}
+          onSelect={{
+            type: "insertDirective",
+            formatter: unstable_defaultDirectiveFormatter,
+          }}
           iconMap={slashCommandIcons}
           fallbackIcon={SlashIcon}
           emptyItemsLabel="No matching commands"
