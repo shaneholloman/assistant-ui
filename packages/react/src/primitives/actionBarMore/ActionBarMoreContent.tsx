@@ -6,11 +6,13 @@ import {
   forwardRef,
 } from "react";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
+import type { WithRenderPropProps } from "../../utils/Primitive";
+import { DropdownMenuRenderContent } from "../dropdownMenuRenderPrimitives";
 import { type ScopedProps, useDropdownMenuScope } from "./scope";
 
 export namespace ActionBarMorePrimitiveContent {
   export type Element = ComponentRef<typeof DropdownMenuPrimitive.Content>;
-  export type Props = ComponentPropsWithoutRef<
+  export type Props = WithRenderPropProps<
     typeof DropdownMenuPrimitive.Content
   > & {
     portalProps?:
@@ -36,7 +38,7 @@ export const ActionBarMorePrimitiveContent = forwardRef<
 
     return (
       <DropdownMenuPrimitive.Portal {...scope} {...portalProps}>
-        <DropdownMenuPrimitive.Content
+        <DropdownMenuRenderContent
           {...scope}
           {...props}
           ref={forwardedRef}
