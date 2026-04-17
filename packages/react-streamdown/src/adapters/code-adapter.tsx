@@ -98,13 +98,14 @@ export function createCodeAdapter(options: CodeAdapterOptions) {
     const CodeHeader =
       componentsByLanguage[language]?.CodeHeader ?? UserCodeHeader;
 
-    // If user provided custom SyntaxHighlighter, use it
+    const headerElement = CodeHeader ? (
+      <CodeHeader node={node} language={language} code={code} />
+    ) : null;
+
     if (SyntaxHighlighter) {
       return (
         <>
-          {CodeHeader && (
-            <CodeHeader node={node} language={language} code={code} />
-          )}
+          {headerElement}
           <SyntaxHighlighter
             node={node}
             components={{ Pre: DefaultPre, Code: DefaultCode }}
@@ -115,9 +116,16 @@ export function createCodeAdapter(options: CodeAdapterOptions) {
       );
     }
 
-    // No custom SyntaxHighlighter - return null to let streamdown handle it
-    // This signals to the adapter that we should use streamdown's default
-    return null;
+    return (
+      <>
+        {headerElement}
+        <DefaultPre node={node}>
+          <code className={className} {...props}>
+            {children}
+          </code>
+        </DefaultPre>
+      </>
+    );
   }
 
   const AdaptedCode = memo(AdaptedCodeInner, (prev, next) => {
@@ -129,6 +137,7 @@ export function createCodeAdapter(options: CodeAdapterOptions) {
       prev.node?.position?.end.line === next.node?.position?.end.line
     );
   });
+  AdaptedCode.displayName = "AdaptedCode";
 
   return AdaptedCode;
 }
