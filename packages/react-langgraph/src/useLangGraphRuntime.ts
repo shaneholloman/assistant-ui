@@ -26,6 +26,7 @@ import {
 } from "@assistant-ui/core";
 import {
   type ToolExecutionStatus,
+  type DataMessagePartComponent,
   useCloudThreadListAdapter,
   useRemoteThreadListRuntime,
   useExternalMessageConverter,
@@ -277,6 +278,19 @@ export type UseLangGraphRuntimeOptions = {
         onCustomEvent?: OnCustomEventCallback;
       }
     | undefined;
+  /**
+   * Register data renderers for Generative UI components.
+   *
+   * `renderers` maps a `ui_message` name to a static component.
+   * `fallback` handles any name without a static match — use this for
+   * dynamic loading (e.g. LangSmith's `LoadExternalComponent`).
+   */
+  uiComponents?:
+    | {
+        fallback?: DataMessagePartComponent;
+        renderers?: Record<string, DataMessagePartComponent>;
+      }
+    | undefined;
   cloud?: AssistantCloud | undefined;
   /**
    * A `RemoteThreadListAdapter` to use instead of the cloud adapter. Provide
@@ -333,9 +347,69 @@ const useLangGraphRuntimeImpl = ({
   getCheckpointId,
   eventHandlers,
   uiStateKey,
+  uiComponents,
 }: UseLangGraphRuntimeOptions) => {
   // biome-ignore lint/correctness/useHookAtTopLevel: intentional conditional/nested hook usage
   const aui = useAui();
+
+  // Ref-based reconcile so inline `uiComponents` objects don't re-register
+  // every render via `useEffect` dependency identity.
+  const uiFallback = uiComponents?.fallback;
+  const uiRenderers = uiComponents?.renderers;
+  // biome-ignore lint/correctness/useHookAtTopLevel: intentional conditional/nested hook usage
+  const registeredRenderersRef = useRef<Map<string, DataMessagePartComponent>>(
+    new Map(),
+  );
+  // biome-ignore lint/correctness/useHookAtTopLevel: intentional conditional/nested hook usage
+  const rendererCleanupsRef = useRef<Map<string, () => void>>(new Map());
+  // biome-ignore lint/correctness/useHookAtTopLevel: intentional conditional/nested hook usage
+  const fallbackRef = useRef<DataMessagePartComponent | undefined>(undefined);
+  // biome-ignore lint/correctness/useHookAtTopLevel: intentional conditional/nested hook usage
+  const fallbackCleanupRef = useRef<(() => void) | undefined>(undefined);
+
+  // biome-ignore lint/correctness/useHookAtTopLevel: intentional conditional/nested hook usage
+  useEffect(() => {
+    const registered = registeredRenderersRef.current;
+    const cleanups = rendererCleanupsRef.current;
+
+    for (const [name, prev] of registered) {
+      if (uiRenderers?.[name] !== prev) {
+        cleanups.get(name)?.();
+        cleanups.delete(name);
+        registered.delete(name);
+      }
+    }
+    if (uiRenderers) {
+      for (const [name, component] of Object.entries(uiRenderers)) {
+        if (component && registered.get(name) !== component) {
+          cleanups.set(name, aui.dataRenderers().setDataUI(name, component));
+          registered.set(name, component);
+        }
+      }
+    }
+
+    if (uiFallback !== fallbackRef.current) {
+      fallbackCleanupRef.current?.();
+      fallbackCleanupRef.current = uiFallback
+        ? aui.dataRenderers().setFallbackDataUI(uiFallback)
+        : undefined;
+      fallbackRef.current = uiFallback;
+    }
+  });
+
+  // biome-ignore lint/correctness/useHookAtTopLevel: intentional conditional/nested hook usage
+  useEffect(() => {
+    const cleanups = rendererCleanupsRef.current;
+    const registered = registeredRenderersRef.current;
+    return () => {
+      for (const cleanup of cleanups.values()) cleanup();
+      cleanups.clear();
+      registered.clear();
+      fallbackCleanupRef.current?.();
+      fallbackCleanupRef.current = undefined;
+      fallbackRef.current = undefined;
+    };
+  }, []);
   const {
     interrupt,
     setInterrupt,

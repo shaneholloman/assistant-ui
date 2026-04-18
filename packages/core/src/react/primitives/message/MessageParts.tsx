@@ -32,6 +32,7 @@ import type {
   QuoteMessagePartComponent,
 } from "../../types/MessagePartComponentTypes";
 import type { MessagePartStatus } from "../../../types/message";
+import type { DataRenderersState } from "../../types/scopes/dataRenderers";
 import { useShallow } from "zustand/shallow";
 
 type MessagePartRange =
@@ -284,17 +285,25 @@ const ToolUIDisplay = ({
   return <Render {...props} />;
 };
 
+const getDataRenderer = (
+  dataRenderers: DataRenderersState,
+  name: string,
+  inlineFallback: DataMessagePartComponent | undefined,
+): DataMessagePartComponent | undefined => {
+  const named = dataRenderers.renderers[name]?.[0];
+  if (named) return named;
+  return dataRenderers.fallbacks[0] ?? inlineFallback;
+};
+
 const DataUIDisplay = ({
   Fallback,
   ...props
 }: {
   Fallback: DataMessagePartComponent | undefined;
 } & DataMessagePartProps) => {
-  const Render = useAuiState((s) => {
-    const Render = s.dataRenderers.renderers[props.name] ?? Fallback;
-    if (Array.isArray(Render)) return Render[0] ?? Fallback;
-    return Render;
-  });
+  const Render = useAuiState((s) =>
+    getDataRenderer(s.dataRenderers, props.name, Fallback),
+  );
   if (!Render) return null;
   return <Render {...props} />;
 };
@@ -522,12 +531,11 @@ const RegisteredToolUI: FC = () => {
  */
 const RegisteredDataRendererUI: FC = () => {
   const part = useAuiState((s) => s.part);
-  const Render = useAuiState((s) => {
-    if (s.part.type !== "data") return null;
-    const entry = s.dataRenderers.renderers[s.part.name];
-    if (Array.isArray(entry)) return entry[0] ?? null;
-    return entry ?? null;
-  });
+  const Render = useAuiState((s) =>
+    s.part.type === "data"
+      ? (getDataRenderer(s.dataRenderers, s.part.name, undefined) ?? null)
+      : null,
+  );
 
   if (!Render || part.type !== "data") return null;
 
@@ -584,6 +592,9 @@ const MessagePrimitivePartsInner: FC<{
 }> = ({ children }) => {
   const aui = useAui();
   const contentLength = useAuiState((s) => s.message.parts.length);
+  // Subscribed (not snapshotted like `tools`) so fallbacks registered after
+  // the first render trigger a re-render and `hasUI` re-evaluates.
+  const dataRenderers = useAuiState((s) => s.dataRenderers);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: aui accessors are stable refs
   return useMemo(
@@ -609,10 +620,9 @@ const MessagePrimitivePartsInner: FC<{
                     };
                   }
                   if (state.type === "data") {
-                    const entry = aui.dataRenderers().getState().renderers[
-                      state.name
-                    ];
-                    const hasUI = Array.isArray(entry) ? !!entry[0] : !!entry;
+                    const hasUI =
+                      getDataRenderer(dataRenderers, state.name, undefined) !==
+                      undefined;
                     return {
                       ...state,
                       dataRendererUI: hasUI ? (
@@ -629,7 +639,7 @@ const MessagePrimitivePartsInner: FC<{
           </RenderChildrenWithAccessor>
         </PartByIndexProvider>
       )),
-    [contentLength, children],
+    [contentLength, children, dataRenderers],
   );
 };
 
