@@ -17,6 +17,7 @@ import {
   useState,
   type RefObject,
   useCallback,
+  useMemo,
 } from "react";
 
 export const toExportedMessageRepository = <TMessage>(
@@ -59,15 +60,23 @@ export const useExternalHistory = <TMessage>(
     onSetMessagesRef.current = onSetMessages;
   });
 
+  const formatAdapter = useMemo(() => {
+    if (!historyAdapter) return undefined;
+    if (!historyAdapter.withFormat) {
+      throw new Error(
+        "useAISDKRuntime: ThreadHistoryAdapter is missing the required `withFormat` method.",
+      );
+    }
+    return historyAdapter.withFormat<TMessage, any>(storageFormatAdapter);
+  }, [historyAdapter, storageFormatAdapter]);
+
   useEffect(() => {
-    if (!historyAdapter || loadedRef.current) return;
+    if (!formatAdapter || loadedRef.current) return;
 
     const loadHistory = async () => {
       setIsLoading(true);
       try {
-        const repo = await historyAdapter
-          .withFormat?.(storageFormatAdapter)
-          .load();
+        const repo = await formatAdapter.load();
         if (repo && repo.messages.length > 0) {
           const converted = toExportedMessageRepository(toThreadMessages, repo);
           runtimeRef.current.thread.import(converted);
@@ -99,13 +108,7 @@ export const useExternalHistory = <TMessage>(
     }
 
     loadHistory();
-  }, [
-    historyAdapter,
-    storageFormatAdapter,
-    toThreadMessages,
-    runtimeRef,
-    optionalThreadListItem,
-  ]);
+  }, [formatAdapter, toThreadMessages, runtimeRef, optionalThreadListItem]);
 
   const runStartRef = useRef<number | null>(null);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -114,6 +117,8 @@ export const useExternalHistory = <TMessage>(
   const toolCallCountRef = useRef(0);
 
   useEffect(() => {
+    if (!formatAdapter) return;
+
     const unsubscribe = runtimeRef.current.thread.subscribe(() => {
       const { isRunning } = runtimeRef.current.thread.getState();
       const wasRunning = wasRunningRef.current;
@@ -237,12 +242,10 @@ export const useExternalHistory = <TMessage>(
 
           if (historyIds.current.has(message.id)) {
             if (durationMs !== undefined) {
-              const formatAdapter =
-                historyAdapter?.withFormat?.(storageFormatAdapter);
               let parentId = lastInnerMessageId;
               for (const innerMessage of innerMessages) {
                 try {
-                  await formatAdapter?.update?.(
+                  await formatAdapter.update?.(
                     { parentId, message: innerMessage },
                     storageFormatAdapter.getId(innerMessage),
                   );
@@ -258,18 +261,15 @@ export const useExternalHistory = <TMessage>(
           }
           historyIds.current.add(message.id);
 
-          const formatAdapter =
-            historyAdapter?.withFormat?.(storageFormatAdapter);
-
           const batchItems = toBatchItems(innerMessages);
           for (const item of batchItems) {
-            await formatAdapter?.append(item);
+            await formatAdapter.append(item);
           }
 
           lastInnerMessageId =
             getLastInnerId(innerMessages) ?? lastInnerMessageId;
 
-          formatAdapter?.reportTelemetry?.(batchItems, telemetryOptions);
+          formatAdapter.reportTelemetry?.(batchItems, telemetryOptions);
         }
       }, 0);
     });
@@ -281,7 +281,7 @@ export const useExternalHistory = <TMessage>(
         persistTimerRef.current = null;
       }
     };
-  }, [historyAdapter, storageFormatAdapter, runtimeRef]);
+  }, [formatAdapter, storageFormatAdapter, runtimeRef]);
 
   return isLoading;
 };
