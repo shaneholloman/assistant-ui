@@ -214,7 +214,10 @@ export type UseLangGraphRuntimeOptions = {
     interrupts?: LangGraphInterruptState[];
     uiMessages?: UIMessage[];
   }>;
-  load?: (threadId: string) => Promise<{
+  load?: (
+    threadId: string,
+    config?: { signal: AbortSignal },
+  ) => Promise<{
     messages: LangChainMessage[];
     interrupts?: LangGraphInterruptState[];
     /**
@@ -431,6 +434,8 @@ const useLangGraphRuntimeImpl = ({
   // biome-ignore lint/correctness/useHookAtTopLevel: intentional conditional/nested hook usage
   const [isRunning, setIsRunning] = useState(false);
   // biome-ignore lint/correctness/useHookAtTopLevel: intentional conditional/nested hook usage
+  const [isLoadingThread, setIsLoadingThread] = useState(false);
+  // biome-ignore lint/correctness/useHookAtTopLevel: intentional conditional/nested hook usage
   const [toolStatuses, setToolStatuses] = useState<
     Record<string, ToolExecutionStatus>
   >({});
@@ -532,6 +537,7 @@ const useLangGraphRuntimeImpl = ({
   // biome-ignore lint/correctness/useHookAtTopLevel: intentional conditional/nested hook usage
   const runtime = useExternalStoreRuntime({
     isRunning: effectiveIsRunning,
+    isLoading: isLoadingThread,
     messages: threadMessages,
     adapters: {
       attachments,
@@ -669,11 +675,29 @@ const useLangGraphRuntimeImpl = ({
       const externalId = aui.threadListItem().getState().externalId;
       if (externalId == null) return;
 
-      load(externalId).then(({ messages, interrupts, uiMessages }) => {
-        setMessages(messages);
-        setUIMessages(uiMessages ?? []);
-        setInterrupt(interrupts?.[0]);
-      });
+      // drop stale callbacks and abort the pending load on thread switch/unmount
+      const controller = new AbortController();
+      setIsLoadingThread(true);
+      load(externalId, { signal: controller.signal })
+        .then(({ messages, interrupts, uiMessages }) => {
+          if (controller.signal.aborted) return;
+          setMessages(messages);
+          setUIMessages(uiMessages ?? []);
+          setInterrupt(interrupts?.[0]);
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return;
+          console.warn("useLangGraphRuntime: load handler rejected", error);
+        })
+        .finally(() => {
+          if (controller.signal.aborted) return;
+          setIsLoadingThread(false);
+        });
+
+      return () => {
+        controller.abort();
+        setIsLoadingThread(false);
+      };
     }, [aui, setMessages, setUIMessages, setInterrupt]);
   }
 
