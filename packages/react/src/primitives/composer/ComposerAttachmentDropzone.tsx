@@ -66,13 +66,16 @@ export const ComposerPrimitiveAttachmentDropzone = forwardRef<
       if (disabled) return;
       e.preventDefault();
       setIsDragging(false);
-      for (const file of e.dataTransfer.files) {
-        try {
-          await aui.composer().addAttachment(file);
-        } catch (error) {
-          console.error("Failed to add attachment:", error);
-        }
-      }
+      const files = Array.from(e.dataTransfer.files);
+      await Promise.all(
+        files.map(async (file) => {
+          try {
+            await aui.composer().addAttachment(file);
+          } catch (error) {
+            console.error("Failed to add attachment:", error);
+          }
+        }),
+      );
     },
     [disabled, aui],
   );
