@@ -3,6 +3,8 @@ import type {
   PendingAttachment,
   CompleteAttachment,
 } from "../types/attachment";
+import type { ThreadUserMessagePart } from "../types/message";
+import { generateId } from "../utils/id";
 
 export type AttachmentAdapter = {
   accept: string;
@@ -131,6 +133,72 @@ export function fileMatchesAccept(
   }
 
   return false;
+}
+
+export function attachmentsEqual(
+  a: readonly CompleteAttachment[],
+  b: readonly CompleteAttachment[],
+): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((att, i) => att.id === b[i]!.id);
+}
+
+export function partToCompleteAttachment(
+  part: Exclude<ThreadUserMessagePart, { type: "text" }>,
+): CompleteAttachment {
+  const id = generateId();
+
+  if (part.type === "image") {
+    return {
+      id,
+      type: "image",
+      name: part.filename ?? "image",
+      content: [part],
+      status: { type: "complete" },
+    };
+  }
+
+  if (part.type === "file") {
+    return {
+      id,
+      type: "document",
+      name: part.filename ?? "document",
+      contentType: part.mimeType,
+      content: [part],
+      status: { type: "complete" },
+    };
+  }
+
+  if (part.type === "audio") {
+    return {
+      id,
+      type: "audio",
+      name: `audio.${part.audio.format}`,
+      contentType: `audio/${part.audio.format}`,
+      content: [part],
+      status: { type: "complete" },
+    };
+  }
+
+  return {
+    id,
+    type: "data",
+    name: part.name,
+    content: [part],
+    status: { type: "complete" },
+  };
+}
+
+export function liftNonTextParts(
+  content: readonly ThreadUserMessagePart[],
+): CompleteAttachment[] {
+  const result: CompleteAttachment[] = [];
+  for (const part of content) {
+    if (part.type !== "text") {
+      result.push(partToCompleteAttachment(part));
+    }
+  }
+  return result;
 }
 
 export class CompositeAttachmentAdapter implements AttachmentAdapter {
