@@ -248,15 +248,23 @@ export class RemoteThreadListThreadListRuntimeCore
         [remoteMetadata.remoteId]: mappingId,
       };
 
+      // Filter both arrays first so a concurrent `list()` can't leave the id
+      // duplicated or under the wrong status.
+      const threadIdsWithoutRemote = state.threadIds.filter(
+        (id) => id !== remoteMetadata.remoteId,
+      );
+      const archivedThreadIdsWithoutRemote = state.archivedThreadIds.filter(
+        (id) => id !== remoteMetadata.remoteId,
+      );
+
       const newThreadIds =
         remoteMetadata.status === "regular"
-          ? [...state.threadIds, remoteMetadata.remoteId]
-          : state.threadIds;
-
+          ? [...threadIdsWithoutRemote, remoteMetadata.remoteId]
+          : threadIdsWithoutRemote;
       const newArchivedThreadIds =
         remoteMetadata.status === "archived"
-          ? [...state.archivedThreadIds, remoteMetadata.remoteId]
-          : state.archivedThreadIds;
+          ? [...archivedThreadIdsWithoutRemote, remoteMetadata.remoteId]
+          : archivedThreadIdsWithoutRemote;
 
       this._state.update({
         ...state,
