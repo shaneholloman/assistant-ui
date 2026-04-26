@@ -177,11 +177,12 @@ Container `Box` for the composer area.
 
 ### Input
 
-Ink `TextInput` wired to the composer runtime. Value is managed automatically.
+Terminal line editor wired to the composer runtime. Value is managed automatically and supports cursor-aware editing.
 
 ```tsx
 <ComposerPrimitive.Input
   submitOnEnter
+  multiLine
   placeholder="Type a message..."
   autoFocus
 />
@@ -192,6 +193,41 @@ Ink `TextInput` wired to the composer runtime. Value is managed automatically.
 | `submitOnEnter` | `boolean` | Whether Enter sends the message (default: `false`) |
 | `placeholder` | `string` | Placeholder text when empty |
 | `autoFocus` | `boolean` | Auto-focus on mount |
+| `multiLine` | `boolean` | When true, Enter inserts a newline unless `submitOnEnter` is enabled |
+| `onSubmit` | `(text: string) => void` | Overrides the default send behavior and receives the current composer text |
+
+Supported keyboard bindings:
+
+| Key | Action | Context |
+|-----|--------|---------|
+| `Left` / `Right` | Move cursor by one grapheme | Always |
+| `Backspace` / `Delete` | Remove the grapheme before / after the cursor | Always |
+| `Home` / `End` | Jump to buffer or line boundary | Buffer in single-line, line in multi-line |
+| `Up` / `Down` | Move between lines, preserving column when possible | Multi-line only |
+| `Ctrl+A` / `Ctrl+E` | Move to line start / end | Always |
+| `Ctrl+W` | Kill the word before the cursor | Always |
+| `Ctrl+D` | Delete the grapheme after the cursor | Always |
+| `Ctrl+U` / `Ctrl+K` | Kill from cursor to line start / end; in multi-line, `Ctrl+K` at end-of-line joins the next line | Always |
+| `Ctrl+J` | Insert a newline | Multi-line only; swallowed in single-line so it never submits |
+| `Alt+B` / `Alt+F` | Move by word backward / forward | Terminals that emit meta-key sequences |
+| `Alt+D` | Kill the word after the cursor | Terminals that emit meta-key sequences |
+| `Shift+Enter` | Insert a newline | Multi-line submit mode, terminals that distinguish it |
+
+Word boundaries and grapheme stepping use `Intl.Segmenter`, so emoji, accented letters, skin-tone modifiers, ZWJ sequences, and CJK ideographs each move and delete as a single character.
+
+Some bindings depend on terminal capabilities. iTerm2, Windows Terminal, and most Linux terminals emit `Alt`-letter combinations as `Esc`-prefixed sequences that Ink decodes as meta-key input; macOS Terminal.app requires enabling "Use Option as Meta key" in its preferences before `Alt+B` / `Alt+F` / `Alt+D` work as expected. `Shift+Enter` requires a terminal that supports the CSI-u protocol (iTerm2 3.4+, kitty, foot, and similar) — terminals that conflate it with `Enter` will fall back to the `submitOnEnter` behaviour.
+
+Example with custom submit handling:
+
+```tsx
+<ComposerPrimitive.Input
+  multiLine
+  submitOnEnter
+  onSubmit={(text) => {
+    console.log("submit", text);
+  }}
+/>
+```
 
 ### Send
 
