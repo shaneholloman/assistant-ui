@@ -442,6 +442,10 @@ const COMPLETE_STATUS: MessagePartStatus = Object.freeze({
   type: "complete",
 });
 
+const RUNNING_STATUS: MessagePartStatus = Object.freeze({
+  type: "running",
+});
+
 const EmptyPartsImpl: FC<MessagePartComponentProps> = ({ components }) => {
   const status = useAuiState(
     (s) => (s.message.status ?? COMPLETE_STATUS) as MessagePartStatus,
@@ -571,6 +575,12 @@ export type { PartState };
  *
  * For tool-call parts, adds `toolUI`, `addResult`, and `resume`.
  * For data parts, adds `dataRendererUI`.
+ *
+ * The render function is also invoked once with a synthetic empty text part
+ * (`{ type: "text", text: "", status: { type: "running" } }`) when the
+ * assistant message has no parts yet but is in the running state, so a
+ * loading indicator can render. Differentiate this from a real empty text
+ * via `part.status?.type === "running" && part.text === ""`.
  */
 export type EnrichedPartState =
   | (Extract<PartState, { type: "tool-call" }> & {
@@ -587,60 +597,77 @@ export type EnrichedPartState =
     })
   | Exclude<PartState, { type: "tool-call" } | { type: "data" }>;
 
+const EMPTY_RUNNING_TEXT_PART: Extract<EnrichedPartState, { type: "text" }> =
+  Object.freeze({
+    type: "text",
+    text: "",
+    status: RUNNING_STATUS,
+  });
+
 const MessagePrimitivePartsInner: FC<{
   children: (value: { part: EnrichedPartState }) => ReactNode;
 }> = ({ children }) => {
   const aui = useAui();
   const contentLength = useAuiState((s) => s.message.parts.length);
+  const isRunning = useAuiState(
+    (s) => (s.message.status?.type ?? "complete") === "running",
+  );
+  const isEmptyRunning = contentLength === 0 && isRunning;
   // Subscribed (not snapshotted like `tools`) so fallbacks registered after
   // the first render trigger a re-render and `hasUI` re-evaluates.
   const dataRenderers = useAuiState((s) => s.dataRenderers);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: aui accessors are stable refs
-  return useMemo(
-    () =>
-      Array.from({ length: contentLength }, (_, index) => (
-        <PartByIndexProvider key={index} index={index}>
-          <RenderChildrenWithAccessor
-            getItemState={(aui) => aui.message().part({ index }).getState()}
-          >
-            {(getItem) => {
-              const result = children({
-                get part() {
-                  const state = getItem();
-                  if (state.type === "tool-call") {
-                    const entry = aui.tools().getState().tools[state.toolName];
-                    const hasUI = Array.isArray(entry) ? !!entry[0] : !!entry;
-                    const partMethods = aui.message().part({ index });
-                    return {
-                      ...state,
-                      toolUI: hasUI ? <RegisteredToolUI /> : null,
-                      addResult: partMethods.addToolResult,
-                      resume: partMethods.resumeToolCall,
-                    };
-                  }
-                  if (state.type === "data") {
-                    const hasUI =
-                      getDataRenderer(dataRenderers, state.name, undefined) !==
-                      undefined;
-                    return {
-                      ...state,
-                      dataRendererUI: hasUI ? (
-                        <RegisteredDataRendererUI />
-                      ) : null,
-                    };
-                  }
-                  return state;
-                },
-              });
-              if (result !== null) return result;
-              return <DefaultPartFallback />;
-            }}
-          </RenderChildrenWithAccessor>
-        </PartByIndexProvider>
-      )),
-    [contentLength, children, dataRenderers],
-  );
+  return useMemo(() => {
+    if (contentLength === 0) {
+      if (!isEmptyRunning) return null;
+
+      return (
+        <TextMessagePartProvider text="" isRunning>
+          {children({ part: EMPTY_RUNNING_TEXT_PART })}
+        </TextMessagePartProvider>
+      );
+    }
+
+    return Array.from({ length: contentLength }, (_, index) => (
+      <PartByIndexProvider key={index} index={index}>
+        <RenderChildrenWithAccessor
+          getItemState={(aui) => aui.message().part({ index }).getState()}
+        >
+          {(getItem) => {
+            const result = children({
+              get part() {
+                const state = getItem();
+                if (state.type === "tool-call") {
+                  const entry = aui.tools().getState().tools[state.toolName];
+                  const hasUI = Array.isArray(entry) ? !!entry[0] : !!entry;
+                  const partMethods = aui.message().part({ index });
+                  return {
+                    ...state,
+                    toolUI: hasUI ? <RegisteredToolUI /> : null,
+                    addResult: partMethods.addToolResult,
+                    resume: partMethods.resumeToolCall,
+                  };
+                }
+                if (state.type === "data") {
+                  const hasUI =
+                    getDataRenderer(dataRenderers, state.name, undefined) !==
+                    undefined;
+                  return {
+                    ...state,
+                    dataRendererUI: hasUI ? <RegisteredDataRendererUI /> : null,
+                  };
+                }
+                return state;
+              },
+            });
+            if (result !== null) return result;
+            return <DefaultPartFallback />;
+          }}
+        </RenderChildrenWithAccessor>
+      </PartByIndexProvider>
+    ));
+  }, [contentLength, children, isEmptyRunning, dataRenderers]);
 };
 
 /**
