@@ -17,6 +17,7 @@ import { MoreDropdown } from "@/components/shared/more-dropdown";
 import { NavItems } from "@/components/shared/nav-items";
 import { useDocsSidebar } from "@/components/docs/contexts/sidebar";
 import { useAssistantPanel } from "@/components/docs/assistant/context";
+import { PlatformSwitcher } from "@/components/docs/layout/platform-switcher";
 import { ThemeToggle } from "@/components/shared/theme-toggle";
 import { analytics } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
@@ -125,6 +126,12 @@ export function DocsHeader({ section, sectionHref }: DocsHeaderProps) {
           >
             {section}
           </Link>
+          <span className="mx-2 hidden text-muted-foreground/40 sm:inline">
+            ·
+          </span>
+          <div className="hidden sm:block">
+            <PlatformSwitcher />
+          </div>
         </div>
 
         {/* Mobile controls */}
@@ -208,6 +215,9 @@ export function DocsHeader({ section, sectionHref }: DocsHeaderProps) {
         )}
       >
         <nav className="flex h-full flex-col gap-1 overflow-y-auto px-4 pt-4">
+          <div className="pb-3">
+            <PlatformSwitcher />
+          </div>
           {filteredItems.map((item) =>
             item.type === "link" ? (
               item.href.startsWith("http") ? (

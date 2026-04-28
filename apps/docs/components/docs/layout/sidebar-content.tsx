@@ -8,7 +8,80 @@ import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { cn } from "@/lib/utils";
 import { useDocsSidebar } from "@/components/docs/contexts/sidebar";
+import {
+  isVisibleForPlatform,
+  usePlatform,
+  type Platform,
+} from "@/components/docs/contexts/platform";
 import { analytics } from "@/lib/analytics";
+
+/**
+ * Top-level docs folder names (from each folder's meta.json `title`) that this
+ * sidebar treats specially. Kept here as named constants so the platform
+ * filter / merge isn't silently broken if a meta title is renamed.
+ */
+const INJECT_TARGET_FOLDER = "Docs";
+const PLATFORM_INJECTED_FOLDER: Record<Platform, string | null> = {
+  react: null,
+  rn: "React Native",
+  ink: "React Ink",
+};
+const PLATFORM_FOLDER_NAMES = new Set(
+  Object.values(PLATFORM_INJECTED_FOLDER).filter(
+    (v): v is string => v !== null,
+  ),
+);
+
+/** Read the optional `platforms` field from a page tree node. */
+function nodePlatforms(node: PageTree.Node): readonly string[] | undefined {
+  return (node as unknown as { platforms?: readonly string[] }).platforms;
+}
+
+function isNodeVisible(node: PageTree.Node, platform: Platform): boolean {
+  return isVisibleForPlatform(nodePlatforms(node), platform);
+}
+
+/**
+ * True when this node would render at least one page or folder under the
+ * given platform — i.e., the section / folder is not empty after filtering.
+ */
+function hasVisibleContent(node: PageTree.Node, platform: Platform): boolean {
+  if (!isNodeVisible(node, platform)) return false;
+  if (node.type === "page") return true;
+  if (node.type === "separator") return false;
+  if (node.index && isNodeVisible(node.index, platform)) return true;
+  return node.children.some((c) => hasVisibleContent(c, platform));
+}
+
+/**
+ * Drop separators that have no visible content between them and the next
+ * separator (or end of list). Pages / folders that are themselves invisible
+ * are preserved here — SectionItem handles per-node visibility — but we use
+ * isNodeVisible/hasVisibleContent to decide whether the *segment* under each
+ * separator has anything worth rendering.
+ */
+function pruneEmptySeparators(
+  items: readonly PageTree.Node[],
+  platform: Platform,
+): PageTree.Node[] {
+  const result: PageTree.Node[] = [];
+  items.forEach((item, i) => {
+    if (item.type !== "separator") {
+      result.push(item);
+      return;
+    }
+    let hasVisible = false;
+    for (const next of items.slice(i + 1)) {
+      if (next.type === "separator") break;
+      if (hasVisibleContent(next, platform)) {
+        hasVisible = true;
+        break;
+      }
+    }
+    if (hasVisible) result.push(item);
+  });
+  return result;
+}
 
 interface SidebarContentProps {
   tree?: PageTree.Root;
@@ -35,6 +108,9 @@ function SectionItem({
   depth?: number;
 }) {
   const pathname = usePathname();
+  const { platform } = usePlatform();
+
+  if (!isNodeVisible(item, platform)) return null;
 
   if (item.type === "separator") {
     return (
@@ -188,15 +264,73 @@ function SidebarSection({
 export function SidebarContent({ tree }: SidebarContentProps) {
   const { setOpen: setSidebarOpen } = useDocsSidebar();
   const pathname = usePathname();
+  const { platform, setPlatform } = usePlatform();
   const navRef = useRef<HTMLElement>(null);
 
-  // Top-level folders become the chevron sections.
-  const sections = useMemo<PageTree.Folder[]>(() => {
-    if (!tree?.children) return [];
-    return tree.children.filter(
+  // Read latest platform via ref so the auto-switch effect below depends only
+  // on pathname — without this, the effect re-fires whenever the user clicks
+  // the platform switcher, immediately reverting their selection on
+  // platform-specific pages (e.g. /docs/react-native/...).
+  const platformRef = useRef(platform);
+  platformRef.current = platform;
+
+  // If the user lands on a page (e.g. from a search result) whose containing
+  // section is hidden under the current platform, switch to a platform that
+  // makes it visible. Sections with no `platforms` field are universal and
+  // never trigger this. Only fires on pathname change, not platform change.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is the only intended trigger
+  useEffect(() => {
+    const allFolders = (tree?.children ?? []).filter(
       (n): n is PageTree.Folder => n.type === "folder",
     );
-  }, [tree]);
+    const active = allFolders.find((s) => containsPath(s, pathname));
+    const platforms = active ? nodePlatforms(active) : undefined;
+    if (!platforms || platforms.length === 0) return;
+    if (platforms.includes(platformRef.current)) return;
+    setPlatform(platforms[0] as Platform);
+  }, [pathname]);
+
+  // Top-level folders become the chevron sections. The standalone
+  // platform-specific top-levels ("React Native", "React Ink") never render
+  // as their own sections; instead, when their platform is active, their
+  // children are merged into the main "Docs" section so the sidebar
+  // structure stays unified across platforms. Per-page `platforms` filtering
+  // is handled by SectionItem.
+  const sections = useMemo<PageTree.Folder[]>(() => {
+    if (!tree?.children) return [];
+    const allFolders = tree.children.filter(
+      (n): n is PageTree.Folder => n.type === "folder",
+    );
+
+    const injectName = PLATFORM_INJECTED_FOLDER[platform];
+    const injectFolder = injectName
+      ? allFolders.find((f) => f.name === injectName)
+      : undefined;
+
+    return allFolders
+      .filter(
+        (f) =>
+          !PLATFORM_FOLDER_NAMES.has(String(f.name)) &&
+          isNodeVisible(f, platform),
+      )
+      .map((f) => {
+        if (!injectFolder || f.name !== INJECT_TARGET_FOLDER) return f;
+        const separator: PageTree.Separator = {
+          type: "separator",
+          name: injectFolder.name,
+          $id: `platform-injected-${injectFolder.$id ?? "sep"}`,
+        };
+        return {
+          ...f,
+          children: [...f.children, separator, ...injectFolder.children],
+        };
+      })
+      .map((f) => ({
+        ...f,
+        children: pruneEmptySeparators(f.children, platform),
+      }))
+      .filter((f) => hasVisibleContent(f, platform));
+  }, [tree, platform]);
 
   const activeSectionId = useMemo(() => {
     const match = sections.find((s) => containsPath(s, pathname));
