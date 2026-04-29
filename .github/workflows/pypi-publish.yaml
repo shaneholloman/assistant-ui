@@ -1,15 +1,5 @@
 name: PyPI Publish
 
-# Publishes `assistant-stream` to PyPI via OIDC trusted publishing — no
-# secrets required. The PyPI project's trusted-publisher config must point
-# at this workflow file (`pypi-publish.yaml`) and the `pypi publish`
-# environment used below.
-#
-# Triggered by:
-#   - workflow_dispatch (manual; optionally pin a release SHA)
-#   - repository_dispatch with type `pypi-publish` and an optional
-#     `releaseSha` field on the client_payload (chains from another job)
-
 on:
   repository_dispatch:
     types: [pypi-publish]
@@ -170,23 +160,41 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-          status=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" \
-            "https://pypi.org/pypi/$PYTHON_PACKAGE_NAME/$version/json")
+          pypi_body=$(mktemp)
+          trap 'rm -f "$pypi_body"' EXIT
+          status=$(curl -s --max-time 30 -o "$pypi_body" -w "%{http_code}" \
+            "https://pypi.org/pypi/$PYTHON_PACKAGE_NAME/json")
 
           case "$status" in
             200)
-              echo "$PYTHON_PACKAGE_NAME@$version already on PyPI; skipping publish."
-              echo "shouldPublish=false" >> "$GITHUB_OUTPUT"
+              latest=$(python3 -c 'import sys, json; print(json.load(sys.stdin).get("info", {}).get("version") or "")' < "$pypi_body")
+              exists=$(python3 -c 'import sys, json; d=json.load(sys.stdin); print("true" if sys.argv[1] in d.get("releases", {}) else "false")' "$version" < "$pypi_body")
               ;;
             404)
-              echo "$PYTHON_PACKAGE_NAME@$version not yet on PyPI; will publish."
-              echo "shouldPublish=true" >> "$GITHUB_OUTPUT"
+              latest=""
+              exists="false"
               ;;
             *)
-              echo "Unexpected PyPI status $status for $PYTHON_PACKAGE_NAME@$version" >&2
+              echo "Unexpected PyPI status $status for $PYTHON_PACKAGE_NAME" >&2
               exit 1
               ;;
           esac
+
+          if [ -n "$latest" ] && [ "$version" != "$latest" ]; then
+            highest=$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -n1)
+            if [ "$highest" != "$version" ]; then
+              echo "Refusing to publish $PYTHON_PACKAGE_NAME@$version: lower than current PyPI latest ($latest)" >&2
+              exit 1
+            fi
+          fi
+
+          if [ "$exists" = "true" ]; then
+            echo "$PYTHON_PACKAGE_NAME@$version already on PyPI; skipping publish."
+            echo "shouldPublish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$PYTHON_PACKAGE_NAME@$version not yet on PyPI; will publish."
+            echo "shouldPublish=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Write release summary
         if: steps.target.outputs.shouldPublish == 'true'
@@ -212,7 +220,8 @@ jobs:
     environment: pypi publish
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      # Required to create GitHub releases.
+      contents: write
       # Required for PyPI trusted publishing (OIDC).
       id-token: write
     concurrency:
@@ -226,10 +235,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 1
+          fetch-tags: true
           ref: ${{ env.RELEASE_SHA }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@cb5e2bb1f6e4a3caf6dd3bb691baad1d8b9ea98e # v6.10.0
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          # No cache - hardened against cache poisoning for sensitive publish operations
+          enable-cache: false
 
       - name: Build sdist + wheel
         working-directory: ${{ env.PYTHON_PACKAGE_DIR }}
@@ -252,12 +265,42 @@ jobs:
             exit 1
           fi
 
+      # PyPI trusted publishing requires this workflow filename and the
+      # `pypi publish` environment to match the project's trusted-publisher config.
       - name: Publish to PyPI via OIDC
         uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc # v1.13.0
         with:
           packages-dir: ${{ env.PYTHON_PACKAGE_DIR }}/dist
-          # No `password` — the action uses GitHub OIDC + the trusted-publisher
-          # configuration on PyPI to mint a short-lived token at publish time.
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="pypi/${PYTHON_PACKAGE_NAME}@${VERSION}"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; skipping."
+            exit 0
+          fi
+
+          prev=$(git tag --list "pypi/${PYTHON_PACKAGE_NAME}@*" \
+            | sort -V \
+            | awk -v t="$tag" '$0 != t' \
+            | tail -n1)
+
+          if [ -n "$prev" ]; then
+            gh release create "$tag" \
+              --target "$RELEASE_SHA" \
+              --title "$tag" \
+              --notes-start-tag "$prev" \
+              --generate-notes
+          else
+            gh release create "$tag" \
+              --target "$RELEASE_SHA" \
+              --title "$tag" \
+              --notes "First $PYTHON_PACKAGE_NAME release published via this workflow."
+          fi
 
       - name: Recovery guidance
         if: failure()
