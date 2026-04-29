@@ -40,6 +40,22 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "react": [
+        "./dist/react/index.d.ts"
+      ],
+      "internal": [
+        "./dist/internal.d.ts"
+      ],
+      "store": [
+        "./dist/store/index.d.ts"
+      ],
+      "store/internal": [
+        "./dist/store/internal.d.ts"
+      ]
+    }
+  },
   "files": [
     "dist",
     "src",
