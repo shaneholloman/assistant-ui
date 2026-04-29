@@ -145,7 +145,11 @@ export type {
 
 // Runtime Core Interface Types
 export type {
+  AttachmentAddErrorEvent,
+  AttachmentAddErrorReason,
   ComposerRuntimeCore,
+  ComposerRuntimeEventCallback,
+  ComposerRuntimeEventPayload,
   ComposerRuntimeEventType,
   DictationState,
   EditComposerRuntimeCore,
@@ -162,6 +166,8 @@ export type {
   SpeechState,
   VoiceSessionState,
   SubmittedFeedback,
+  ThreadRuntimeEventCallback,
+  ThreadRuntimeEventPayload,
   ThreadRuntimeEventType,
   StartRunConfig,
   ResumeRunConfig,
@@ -193,6 +199,8 @@ export type {
 } from "./runtime/api/thread-list-runtime";
 
 export type {
+  ThreadListItemEventCallback,
+  ThreadListItemEventPayload,
   ThreadListItemEventType,
   ThreadListItemRuntime,
 } from "./runtime/api/thread-list-item-runtime";
