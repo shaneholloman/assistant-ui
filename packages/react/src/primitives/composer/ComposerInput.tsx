@@ -297,13 +297,18 @@ export const ComposerPrimitiveInput = forwardRef<
         onChange,
         (e: React.ChangeEvent<HTMLTextAreaElement>) => {
           if (!aui.composer().getState().isEditing) return;
-          const isComposing =
-            (e.nativeEvent as { isComposing?: boolean }).isComposing === true ||
-            compositionRef.current;
-          if (isComposing) return;
+          const nativeIsComposing =
+            (e.nativeEvent as { isComposing?: boolean }).isComposing === true;
+          // recover stuck compositionRef when the browser drops compositionend
+          if (compositionRef.current && !nativeIsComposing) {
+            compositionRef.current = false;
+          }
+          const isComposing = nativeIsComposing || compositionRef.current;
+          // keep controlled value in sync mid-IME so react does not reset the textarea to a stale value
           flushResourcesSync(() => {
             aui.composer().setText(e.target.value);
           });
+          if (isComposing) return;
           const pos = e.target.selectionStart ?? e.target.value.length;
           if (pluginRegistry) {
             for (const plugin of pluginRegistry.getPlugins()) {
