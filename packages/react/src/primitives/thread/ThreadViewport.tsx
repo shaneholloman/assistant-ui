@@ -8,10 +8,15 @@ import {
   type ComponentPropsWithoutRef,
   useCallback,
 } from "react";
+import { useManagedRef } from "../../utils/hooks/useManagedRef";
 import { useThreadViewportAutoScroll } from "./useThreadViewportAutoScroll";
 import { ThreadPrimitiveViewportProvider } from "../../context/providers/ThreadViewportProvider";
 import { useSizeHandle } from "../../utils/hooks/useSizeHandle";
-import { useThreadViewport } from "../../context/react/ThreadViewportContext";
+import {
+  useThreadViewport,
+  useThreadViewportStore,
+} from "../../context/react/ThreadViewportContext";
+import { useTopAnchorReserve } from "./topAnchor/useTopAnchorReserve";
 
 export namespace ThreadPrimitiveViewport {
   export type Element = ComponentRef<typeof Primitive.div>;
@@ -30,6 +35,26 @@ export namespace ThreadPrimitiveViewport {
      * - "top": New user messages anchor at the top of the viewport for a focused reading experience.
      */
     turnAnchor?: "top" | "bottom" | undefined;
+
+    /**
+     * Clamps tall user messages so the assistant response stays in view.
+     *
+     * @default { tallerThan: "10em", visibleHeight: "6em" }
+     */
+    topAnchorMessageClamp?: {
+      /**
+       * Clamp messages taller than this. Supports `px`, `em`, and `rem`.
+       *
+       * @default "10em"
+       */
+      tallerThan?: string;
+      /**
+       * Visible portion of clamped messages. Supports `px`, `em`, and `rem`.
+       *
+       * @default "6em"
+       */
+      visibleHeight?: string;
+    };
 
     /**
      * Whether to scroll to bottom when a new run starts.
@@ -60,6 +85,14 @@ const useViewportSizeRef = () => {
   return useSizeHandle(register, getHeight);
 };
 
+const useViewportElementRef = () => {
+  const registerViewportElement = useThreadViewport(
+    (s) => s.registerViewportElement,
+  );
+
+  return useManagedRef(registerViewportElement);
+};
+
 const ThreadPrimitiveViewportScrollable = forwardRef<
   ThreadPrimitiveViewport.Element,
   ThreadPrimitiveViewport.Props
@@ -82,7 +115,16 @@ const ThreadPrimitiveViewportScrollable = forwardRef<
       scrollToBottomOnThreadSwitch,
     });
     const viewportSizeRef = useViewportSizeRef();
-    const ref = useComposedRefs(forwardedRef, autoScrollRef, viewportSizeRef);
+    const viewportElementRef = useViewportElementRef();
+    const threadViewportStore = useThreadViewportStore();
+    const turnAnchor = threadViewportStore.getState().turnAnchor;
+    useTopAnchorReserve(turnAnchor === "top");
+    const ref = useComposedRefs(
+      forwardedRef,
+      autoScrollRef,
+      viewportSizeRef,
+      viewportElementRef,
+    );
 
     return (
       <Primitive.div {...rest} ref={ref}>
@@ -114,9 +156,11 @@ ThreadPrimitiveViewportScrollable.displayName =
 export const ThreadPrimitiveViewport = forwardRef<
   ThreadPrimitiveViewport.Element,
   ThreadPrimitiveViewport.Props
->(({ turnAnchor, ...props }, ref) => {
+>(({ turnAnchor, topAnchorMessageClamp, ...props }, ref) => {
   return (
-    <ThreadPrimitiveViewportProvider options={{ turnAnchor }}>
+    <ThreadPrimitiveViewportProvider
+      options={{ turnAnchor, topAnchorMessageClamp }}
+    >
       <ThreadPrimitiveViewportScrollable {...props} ref={ref} />
     </ThreadPrimitiveViewportProvider>
   );
