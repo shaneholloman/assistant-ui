@@ -19,6 +19,12 @@ export const PLATFORM_LABELS: Record<Platform, string> = {
   ink: "React Ink",
 };
 
+export const PLATFORM_DOC_BASE_PATHS: Record<Platform, string> = {
+  react: "/docs",
+  rn: "/docs/react-native",
+  ink: "/docs/ink",
+};
+
 const STORAGE_KEY = "assistant-ui::docs:platform";
 const URL_PARAM = "platform";
 const DEFAULT_PLATFORM: Platform = "react";
@@ -29,6 +35,7 @@ interface PlatformContextValue {
 }
 
 const PlatformContext = createContext<PlatformContextValue | null>(null);
+const PlatformScopeContext = createContext<Platform | null>(null);
 
 export function usePlatform() {
   const ctx = useContext(PlatformContext);
@@ -39,16 +46,34 @@ export function usePlatform() {
 }
 
 export function usePlatformOrDefault(): Platform {
-  return useContext(PlatformContext)?.platform ?? DEFAULT_PLATFORM;
+  const scopedPlatform = useContext(PlatformScopeContext);
+  const globalPlatform = useContext(PlatformContext)?.platform;
+  return scopedPlatform ?? globalPlatform ?? DEFAULT_PLATFORM;
 }
 
-function isPlatform(value: string | null): value is Platform {
-  return value !== null && (PLATFORMS as readonly string[]).includes(value);
+export function PlatformScope({
+  children,
+  platform,
+}: {
+  children: ReactNode;
+  platform: Platform;
+}) {
+  return (
+    <PlatformScopeContext.Provider value={platform}>
+      {children}
+    </PlatformScopeContext.Provider>
+  );
+}
+
+export function isPlatform(
+  value: string | null | undefined,
+): value is Platform {
+  return value != null && (PLATFORMS as readonly string[]).includes(value);
 }
 
 const isBrowser = () => typeof window !== "undefined";
 
-// Avoid useSearchParams so the docs layout isn't opted out of static rendering.
+// Avoid useSearchParams so the docs layout stays statically renderable.
 function readUrlPlatform(): Platform | null {
   if (!isBrowser()) return null;
   try {
@@ -59,8 +84,18 @@ function readUrlPlatform(): Platform | null {
   }
 }
 
-// replaceState (not router.replace) so URL fixups don't pollute back/forward
-// history and Next.js doesn't treat the param change as a refetch trigger.
+function readStoredPlatform(): Platform | null {
+  if (!isBrowser()) return null;
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    return isPlatform(stored) ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+// replaceState keeps platform selection shareable without adding noisy
+// back/forward entries for every dropdown change.
 function writeUrlPlatform(next: Platform): void {
   if (!isBrowser()) return;
   try {
@@ -76,25 +111,46 @@ function writeUrlPlatform(next: Platform): void {
   } catch {}
 }
 
-function syncUrlAndStore(): void {
-  if (!isBrowser()) return;
-  const fromUrl = readUrlPlatform();
-  if (fromUrl) {
-    if (fromUrl !== platformStore.getSnapshot()) {
-      platformStore.setValue(fromUrl);
+function platformDocPathSuffix(
+  pathname: string,
+  platform: Extract<Platform, "rn" | "ink">,
+): string | null {
+  const basePath = PLATFORM_DOC_BASE_PATHS[platform];
+  if (pathname === basePath) return "";
+  if (!pathname.startsWith(`${basePath}/`)) return null;
+
+  return pathname.slice(basePath.length);
+}
+
+export function getPlatformSwitchHref(
+  pathname: string,
+  nextPlatform: Platform,
+): string | null {
+  const currentPlatformSuffix =
+    platformDocPathSuffix(pathname, "rn") ??
+    platformDocPathSuffix(pathname, "ink");
+
+  if (currentPlatformSuffix === null) {
+    if (
+      pathname === PLATFORM_DOC_BASE_PATHS.react &&
+      nextPlatform !== "react"
+    ) {
+      return PLATFORM_DOC_BASE_PATHS[nextPlatform];
     }
-    if (fromUrl === DEFAULT_PLATFORM) {
-      writeUrlPlatform(DEFAULT_PLATFORM);
-    }
-    return;
+    return null;
   }
-  writeUrlPlatform(platformStore.getSnapshot());
+
+  if (nextPlatform === "react") return PLATFORM_DOC_BASE_PATHS.react;
+
+  return `${PLATFORM_DOC_BASE_PATHS[nextPlatform]}${currentPlatformSuffix}`;
 }
 
 // SSR-safe localStorage backing for useSyncExternalStore, with cross-tab sync
 // via the storage event.
 class PlatformStore {
   private listeners = new Set<() => void>();
+  private urlPlatform: Platform | null = readUrlPlatform();
+  private storedPlatform: Platform | null = readStoredPlatform();
 
   constructor() {
     if (isBrowser()) {
@@ -102,9 +158,15 @@ class PlatformStore {
     }
   }
 
+  private refreshFromBrowser = () => {
+    this.urlPlatform = readUrlPlatform();
+    this.storedPlatform = readStoredPlatform();
+  };
+
   private handleStorage = (e: StorageEvent) => {
     if (e.storageArea !== window.localStorage) return;
     if (e.key !== STORAGE_KEY) return;
+    this.storedPlatform = readStoredPlatform();
     this.notify();
   };
 
@@ -122,13 +184,7 @@ class PlatformStore {
   };
 
   getSnapshot = (): Platform => {
-    if (!isBrowser()) return DEFAULT_PLATFORM;
-    try {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
-      return isPlatform(stored) ? stored : DEFAULT_PLATFORM;
-    } catch {
-      return DEFAULT_PLATFORM;
-    }
+    return this.urlPlatform ?? this.storedPlatform ?? DEFAULT_PLATFORM;
   };
 
   getServerSnapshot = (): Platform => DEFAULT_PLATFORM;
@@ -137,8 +193,18 @@ class PlatformStore {
     if (!isBrowser()) return;
     try {
       window.localStorage.setItem(STORAGE_KEY, next);
-      this.notify();
+      this.storedPlatform = next;
     } catch {}
+    writeUrlPlatform(next);
+    this.urlPlatform = next === DEFAULT_PLATFORM ? null : next;
+    this.notify();
+  };
+
+  syncUrlAndStore = () => {
+    this.refreshFromBrowser();
+    const next = this.getSnapshot();
+    if (next === this.storedPlatform) return;
+    this.setValue(next);
   };
 }
 
@@ -153,23 +219,20 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     platformStore.getServerSnapshot,
   );
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is the only intended trigger
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is the route-change trigger
   useEffect(() => {
-    syncUrlAndStore();
+    platformStore.syncUrlAndStore();
   }, [pathname]);
 
-  // popstate covers search-only changes (back/forward to a different
-  // ?platform=) which usePathname doesn't fire for.
   useEffect(() => {
-    window.addEventListener("popstate", syncUrlAndStore);
+    window.addEventListener("popstate", platformStore.syncUrlAndStore);
     return () => {
-      window.removeEventListener("popstate", syncUrlAndStore);
+      window.removeEventListener("popstate", platformStore.syncUrlAndStore);
     };
   }, []);
 
   const setPlatform = useCallback((next: Platform) => {
     platformStore.setValue(next);
-    writeUrlPlatform(next);
   }, []);
 
   return (
